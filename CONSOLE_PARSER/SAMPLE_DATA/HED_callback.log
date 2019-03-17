@@ -1,0 +1,12 @@
+Transient Error 
+Unregistering Done 
+[RAS]   mErrLogSetupData->SystemErrorEn:1, mErrLogSetupData->EMcaCSmiEn:1, mErrLogSetupData->CorrectedMemoryErrors:1  mSpareIntSelect:1                                                                                                                                 
+Re enabling SMIs done 
+SMM Error Handler Entry
+smisrcimc == 1 ImcSockets:1  extraRas ha0: 12800  extraRas ha1: FFFFFFFF
+   GetBitmapOfNodeWithErrors-- mc:0  imc status :10002
+   correct error overflow channel:0  status :2
+GetOrSetErrorHandlingStatus - Get Event Pending status for Node0 = 1
+ImcNodesNewEvents = 1
+ImcNodesEventProgress = 0
+[RAS]    PendingProcessorErrorExists - umcSockets:0  imcSockets:1  imcNodesEventProgress:0  imcNodesNewEvents:1 

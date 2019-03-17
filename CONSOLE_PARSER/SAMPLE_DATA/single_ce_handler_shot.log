@@ -1,0 +1,26 @@
+SMM Error Handler Entry
+smisrcimc == 1 ImcSockets:1  extraRas ha0: 12800  extraRas ha1: FFFFFFFF
+   GetBitmapOfNodeWithErrors-- mc:0  imc status :10002
+   correct error overflow channel:0  status :2
+GetOrSetErrorHandlingStatus - Get Event Pending status for Node0 = 1
+ImcNodesNewEvents = 1
+ImcNodesEventProgress = 0
+[RAS]    PendingProcessorErrorExists - umcSockets:0  imcSockets:1  imcNodesEventProgress:0  imcNodesNewEvents:1 
+
+Corrected Memory Error Hander start!  
+    New Events  start!  
+GetLogicalToPhysicalRankId  logical rank:1 -->physical rank:1
+1 totalCSMI = 1 
+1 Disable CSMI, start periodic timer 
+DisableSMIForCorrectedMemoryErrors Start 
+before exras reg value = 12800 
+after exras reg value = 2800 
+DisableSMIForCorrectedMemoryErrors End 
+DisableCSMI Start 
+end of emcagen2 disabled 
+end of emca csmi disabled 
+ gGetErrInfo: 0 
+Last Err Info Node=0 ddrch=0 dimm=0 rank=1 
+ WHEA Error Type: MEMORY NON FATAL 
+    New Events  end!  
+Corrected Memory Error Hander end!  

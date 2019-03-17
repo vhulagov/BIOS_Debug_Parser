@@ -1,0 +1,14 @@
+MemTest -- Started
+Checkpoint Code: Socket 0, 0xB9, 0x00, 0x0000
+[00m
+[31m
+[40mN0.C0.D0.R1: MemTest Failure!
+N0.C0.D0.R1: B0:B3 = 0x0
+N0.C0.D0.R1: B4:B7 = 0x0
+N0.C0.D0.R1: ECC = 0xF0
+[00m
+[37m
+[40mN0.C0.D0.R1: FPT strobe = 17!
+A warning has been logged! Warning Code = 0x30, Minor Warning Code = 0x1C, Data = 0x1
+S0 Ch0 DIMM0 Rank1
+MemTest - 6892ms

@@ -1,0 +1,46 @@
+# Rank (given in Nx.Cx.Dx.Rx) Node/Channel/DIMM/Rank Indicator
+# RxDqs- (RxDqLeft) Read DQ timing margin, left side direction
+# RxDqs+ (RxDqRight) Read DQ timing margin, right side direction
+# RxV- (RxVLow) Read DQ VREF margin, low side direction
+# RxV+ (RxVHigh) Read DQ VREF margin, high side direction
+# TxDq- (TxDqLeft) Write DQ timing margin, left direction
+# TxDq+ (TxDqRight) Write DQ timing margin, right direction
+# TxV- (TxVLow) Write DQ VREF margin, low side direction
+# TxV+ (TxVHigh) Write DQ VREF margin, high side direction
+
+#POR:
+#  slots_count: 24
+#  ram_freq: 2666
+#  cpu_nodes: 2
+#  mem_channels: 6
+#  dimm_per_channel: 2
+
+DDR4-2933:
+  RxDqs-: 10
+  RxDqs+: 10
+  TxDq-: 11
+  TxDq+: 11
+
+DDR4-2666:
+  RxDqs-: 10
+  RxDqs+: 10
+  TxDq-: 11
+  TxDq+: 11
+
+DDR4-2400:
+  RxDqs-: 10
+  RxDqs+: 10
+  TxDq-: 11
+  TxDq+: 11
+
+common:
+  RxV-: 12
+  RxV+: 12
+  TxV-: 10
+  TxV+: 10
+  CmdV-: 12
+  CmdV+: 12
+  Cmd-: 19
+  Cmd+: 19
+  Ctl-: 19
+  Ctl+: 19
