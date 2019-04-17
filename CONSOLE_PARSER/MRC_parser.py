@@ -5,6 +5,7 @@ from __future__ import print_function
 import os
 import sys
 import argparse
+import logging
 
 import time
 import stat
@@ -24,12 +25,24 @@ import termios
 # For LED highlighting using PCA9685
 import smbus
 import pca9685pw
+
 from rmt import RMT
 
 from benchmark.test_result import BasicTestResult
+from benchmark.common import yank_api
 from benchmark.conf import Conf, parse_list
 
 sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s',
+    stream=sys.stdout
+)
+logger = logging.getLogger()
+
+rmt_instance = None
+components = []
 
 CONF_FILE = 'MRC_parser.ini'
 
@@ -72,22 +85,22 @@ LED_EXISTENCE = False
 
 # For single socket platform
 LED_DIMM_MATCH_TABLE = {
-    'N0.C0.D0.R0' : 0,
-    'N0.C0.D0.R1' : 0,
-    'N0.C0.D1.R0' : 2,
-    'N0.C0.D1.R1' : 2,
-    'N0.C1.D0.R0' : 4,
-    'N0.C1.D0.R1' : 4,
-    'N0.C1.D1.R0' : 6,
-    'N0.C1.D1.R1' : 6,
-    'N0.C2.D0.R0' : 8,
-    'N0.C2.D0.R1' : 8,
-    'N0.C2.D1.R0' : 10,
-    'N0.C2.D1.R1' : 10,
-    'N0.C3.D0.R0' : 12,
-    'N0.C3.D0.R1' : 12,
-    'N0.C3.D1.R0' : 14,
-    'N0.C3.D1.R1' : 14
+    '0.0.0' : 0,
+    '0.0.0' : 0,
+    '0.0.1' : 2,
+    '0.0.1' : 2,
+    '0.1.0' : 4,
+    '0.1.0' : 4,
+    '0.1.1' : 6,
+    '0.1.1' : 6,
+    '0.2.0' : 8,
+    '0.2.0' : 8,
+    '0.2.1' : 10,
+    '0.2.1' : 10,
+    '0.3.0' : 12,
+    '0.3.0' : 12,
+    '0.3.1' : 14,
+    '0.3.1' : 1
 }
 
 DMIDECODE = { 
@@ -137,6 +150,10 @@ HELPS = {
     'disable_sending': 'disable API calls and e-mail sending',
 }
 
+NO_COMPONENT = """Component {model} not found in the benchmark database.
+Please, create component with alias {model} in benchmark manually."""
+
+
 OPTIONS = { 
     'report': {
         # notification options
@@ -146,24 +163,24 @@ OPTIONS = {
     },  
     'signal_integrity': {
         'rmt_repeats' : (int, 5), 
-        'guidelines' : (str, 'DDR4_Margin_guidelines.yaml')
+        'guidelines' : (str, 'CascadeLake_DDR4_Margin_guidelines.yaml')
     },
     'node_configuration': {
         'por_ram_freq' : (int, 2666),
         'dimms_count' : (int, 24),
         'sockets_count' : (int, 2),
-        'channels_count' : (int, 6),
-        'dimm_per_channel' : (int, 2)
+        'channels_count' : (int, 12),
+        'dimm_per_channel' : (int, 2),
+        'dimm_labels' : (str, 'MY81-EX0-Y3N_dimm_labels.yaml')
     }
 }
 
-dimm_params = ['DIMM vendor', 'DRAM vendor', 'RCD vendor', 'Organisation', 'Form factor', 'Freq', 'Prod. week', 'PN', 'hex']
+dimm_params = ['DIMM vendor', 'DRAM vendor', 'RCD vendor', 'Organisation', 'Form factor', 'Freq', 'Prod. week', 'PN', 'SN']
 
 def tree():
     return defaultdict(tree)
 
 ram_info = tree()
-
 
 def argument_parsing():
     """
@@ -179,6 +196,7 @@ def argument_parsing():
                         action='store_true', default=False)
     return parser.parse_args()
 
+# TODO: canonize method with benchmark-kit
 class TestResult(BasicTestResult):
     environment = {}
     def __init__(self, conf, name):
@@ -200,7 +218,7 @@ class TestResult(BasicTestResult):
         data2save = json.dumps(self.get_result_dict(), indent=4)
         tmpl = 'Saving test result to file {0} in {1} format'
         msg = tmpl.format(filename, data_format)
-        print(msg)
+        logger.debug(msg)
         try:
             if filename == 'stdout':
                 print(data2save)
@@ -208,9 +226,32 @@ class TestResult(BasicTestResult):
                 with open(filename, 'a') as fhandler:
                     fhandler.write(data2save)
         except (OSError, IOError) as err:
-            print('Result saving error:' + {0})
+            logger.info('Result saving error: {0}'.format(err))
             return False
         return True
+
+    @staticmethod
+    def send_component_info(api_url):
+        global components
+        """
+        Send via API component information only
+        """
+        info_dict = {
+            'name': 'empty',
+            'component': components,
+            'result': {},
+        }
+        logger.info("Sending component info to " + api_url)
+        #logger.debug(json.dumps(info_dict))
+        response_code = yank_api(api_url, info_dict)
+        logger.debug("Responce code: " + str(response_code))
+        if response_code == 404:
+            tmpl = NO_COMPONENT
+            component_dict = components[0]
+            msg = tmpl.format(**component_dict)
+            logger.error(msg)
+            sys.exit(1)
+
 
 def dbg_log_src_isconsole(dbg_log_data_source):
     if stat.S_ISCHR(os.stat(dbg_log_data_source).st_mode):
@@ -245,6 +286,41 @@ def ident_dimm(device_rank, state):
             pwm.setPercent(led_id,severity_mapping[state])
         else:
             print("Can't find leds for highlighting failed DIMM")
+
+def send_component_info():
+    global components
+    global rmt_instance
+    #logger.info("Sending components info to Benchmark...")
+    #logger.debug(json.dumps(components, indent=2))
+    rmt_instance.result.component = components
+    model = 'Unknown'
+    if rmt_instance.result.component:
+        model = rmt_instance.result.component[0].get('model')
+        if not args.disable_sending:
+            rmt_instance.result.send_component_info(conf['report']['api_url'])
+            if rmt_instance.result.send_via_api(conf['report']['api_url']):
+                logger.info(json.dumps("Result successfully sended to " + conf['report']['api_url'], indent=2))
+
+def send_rmt_results():
+    global rmt_instance
+    test_name = 'signal_integrity'
+    #environment['baseboard'] = baseboard_mfg + " " + baseboard_product
+    #environment['inventory'] = baseboard_serial
+    #environment['bmc version'] = bmc_version.lstrip('0')
+
+    rmt_instance.result.finish()
+    print(dir(rmt_instance.result))
+    print(rmt_instance.result.get_result_dict())
+    model = 'Unknown'
+    if rmt_instance.result.component:
+        model = rmt_instance.result.component[0].get('model')
+        filename = '{0}_{1}_{2}.json'.format(model, test_name, rmt_instance.result.started_at)
+        rmt_instance.result.save_to_file(filename)
+        print(json.dumps(rmt_instance.result.get_result_dict(), indent=2))
+        if not args.disable_sending:
+            rmt_instance.result.send_component_info(conf['report']['api_url'])
+            if rmt_instance.result.send_via_api(conf['report']['api_url']):
+                logger.info(json.dumps("Result successfully sended to " + conf['report']['api_url'], indent=2))
 
 def process_socket_info(dbg_log_block, dbg_block_name, socket_id):
     print("Processing Socket info table...")
@@ -284,47 +360,52 @@ def process_socket_info(dbg_log_block, dbg_block_name, socket_id):
         param_id += 1
 
 def process_dimm_info(dbg_log_block, dbg_block_name, socket_id):
-    print("Processing DIMM info table...")
+    logger.info("Processing DIMM info table...")
     global ram_info
     ram_info_buffer = []
-#    print(dbg_log_block)
     for line in dbg_log_block:
-        #print(line)
         if line.startswith('=' * 10):
             continue
-        ram_info_buffer.append([v.strip() for v in line.split('|')])
+        line_splitted = ([v.strip() for v in line.split('|')])
 
-        header = ram_info_buffer[0][1:]
-        for index, socket_id in enumerate(header):
-              socket_dict = {}
-              for line in ram_info_buffer[1:-1]:
-                  if len(line) >= index + 2:
+        if line.startswith(' ' * 10):
+            header = line_splitted
+            logger.debug("DIMM info header:" + str(header))
+            continue
+
+        ram_info_buffer.append(line_splitted)
+        for index, socket_id in enumerate(header[1:]):
+            socket_dict = {}
+            #logger.info("Socket:" + str(index) + ' ' + str(socket_id))
+            for line in ram_info_buffer[:-1]:
+                 if len(line) >= index + 2:
                       value = line[index+1].strip()
                       if not value or value == 'N/A':
                            continue
                       if line[0].startswith('Ch'):
                           channel_dict = {}
                           channel_raw, param = line[0].split()
-                          channel_id = re.sub(r'Ch([0-3])', r"Channel \1", channel_raw)
-                          #print("Channel ID: " + channel_id)
+                          channel_id = re.sub(r'Ch([0-5])', r"Channel \1", channel_raw)
                           ram_info[socket_id][channel_id][param] = value
                       else:
                           key = line[0]
                           ram_info[socket_id][key] = value
 
 def ram_info_completeness():
-    print('Checking RAM info completeness...')
+    logger.debug('Checking RAM info completeness...')
     ram_config_status = False
     global ram_info
     global conf
+    global components
     node_configuration = conf['node_configuration']
-    components = []
     components_counter = {
         'sockets_count' : 0,
         'channels_count' : 0,
         'dimms_count' : 0
     }
-#    print("RAM_INFO:" + str(ram_info))
+    dimm_labels = yaml.load(open(conf['node_configuration']['dimm_labels']))
+#    logger.debug("RAM_INFO")
+#    logger.debug(json.dumps(ram_info, indent=2))
     # TODO: rewrite to list comprehension?
     for s, sconf in ram_info.items():
         if s.startswith('Socket'):
@@ -335,17 +416,34 @@ def ram_info_completeness():
                     for d, rdimm in chconf.items():
                         if isinstance(rdimm, dict) and rdimm['DIMM vendor'] != 'Not installed':
                             components_counter['dimms_count'] += 1
+                            size, organisation = re.sub(r'([0-9]+)GB\((.*)\)', r"\1,\2", rdimm['Organisation']).split(",")
+                            prod_week_norm = re.sub(r'ww([0-9][0-8]) 20([0-3][0-9])', r"\2\1", rdimm['Prod. week'])
+                            model = '{}_{}_{}'.format(rdimm['PN'], rdimm['RCD vendor'].upper(), prod_week_norm)
+                            slot = dimm_labels[str('{}.{}.{}'.format(s.split()[-1],c.split()[-1],d.split()[-1]))]
                             components.append({
                                 'type': 'RAM',
-                                'model': rdimm.get('PN'),
-                                'vendor': rdimm.get('DRAM vendor'),
-                                'size': rdimm.get('Organisation'),
-                                'form factor': rdimm.get('Form factor'),
-                                'speed': rdimm.get('Freq'),
-                                'timings': rdimm.get('Timings'),
+                                'pn': rdimm['PN'],
+                                'model': model,
+                                'serial': rdimm['SN'],
+                                'vendor': rdimm['DRAM vendor'],
+                                'size': size,
+                                'organisation': organisation.replace(" ", ""),
+                                'form factor': rdimm['Form factor'],
+                                'speed': rdimm['Freq'],
+                                'timings': rdimm['Timings'],
+                                'slot': slot
                             })
+
+    logger.debug(json.dumps(components_counter, indent=2))
+
     # Validate fullness of ram_info data
     #print(Counter(value for values in ram_info.itervalues() for value in values))
+#    if ram_info.items.count() == components_counter[sockets_count] and
+#       node_configuration['sockets_count'] == sum('Socket' in s for s in ram_info.items())
+#        all(ram_info.items for s in range(
+#    logger.debug("RAM_component_counter")
+#    logger.debug("Counter:" + str(components_counter[x]) + ", " + "Config.:" + str(node_configuration[x]))
+
     ram_config_status = all(components_counter[x] == node_configuration[x] for x in components_counter.keys())
     ram_rdimm_pns_set = set(dimm['model'] for dimm in components)
 
@@ -355,19 +453,19 @@ def process_mbist(dbg_log_block, dbg_block_name, socket_id):
     print('MBIST_PROCESSING...')
     for line in dbg_log_block:
         #print(line)
-        failed_rank_re = re.match(r'.*(N[0-9].C[0-6].D[0-3].R[0-9]): MemTest Failure!', line)
-        if failed_rank_re:
-            #failed_device = ''.join(e for e in failed_rank_re.group(1) if e.isalnum())
-            #failed_device = ''.join(filter(str.isalnum, failed_rank_re.group(1)))
-            failed_device = failed_rank_re.group(1)
+        failed_rank_match = re.match(r'.*(N[0-9].C[0-6].D[0-3].R[0-9]): MemTest Failure!', line)
+        if failed_rank_match:
+            #failed_device = ''.join(e for e in failed_rank_match.group(1) if e.isalnum())
+            #failed_device = ''.join(filter(str.isalnum, failed_rank_match.group(1)))
+            failed_device = '.'.join(failed_rank_match.group(1,2,3))
             print('Founded DQ error in ' + failed_device)
             ident_dimm(failed_device,'warning')
         
 def process_training_info(dbg_log_block, dbg_block_name, socket_id):
     for line in dbg_log_block:
-        failed_rank_re = re.match(r'.*(N[0-9].C[0-6].D[0-3].R[0-9]).S[01][0-9]: Failed RdDqDqs', line)
-        if failed_rank_re:
-            failed_device = failed_rank_re.group(1)
+        failed_rank_match = re.match(r'.*(N[0-9].C[0-6].D[0-3].R[0-9]).S[01][0-9]: Failed RdDqDqs', line)
+        if failed_rank_match:
+            failed_device = failed_rank_match.group(1)
             print('Founded training error ' + failed_device)
             ident_dimm(failed_device,'critical')
 
@@ -375,13 +473,14 @@ def process_smm_ce_handler(dbg_log_block, dbg_block_name, socket_id):
     print("Processing Runtime SMM handlers output...")
 #    print(dbg_log_block)
     for line in dbg_log_block:
-        failed_rank_re = re.match(r'Last Err Info Node=([0-9]) ddrch=([0-9]] dimm=([0]) rank=([1])', line)
-        if failed_rank_re:
-            failed_device = failed_rank_re.group(1)
+        failed_rank_match = re.match(r'Last Err Info Node=([0-9]) ddrch=([0-9]] dimm=([0]) rank=([1])', line)
+        if failed_rank_match:
+            failed_device = failed_rank_match.group(1)
             print('Founded training error ' + failed_device)
             ident_dimm(failed_device,'critical')
 
-def parse_debug_log(result, args):
+def parse_debug_log(args):
+    global rmt_instance
     # TODO: rewrite to class?
     """
     Parse Serial Debug Log for RDIMM/DRAM errors and call specific handlers 
@@ -404,7 +503,7 @@ def parse_debug_log(result, args):
     mrc_fatal_error_catched = False
     current_processing_block_ended = False
 
-    rmt_instance = RMT(conf, ram_info, conf['signal_integrity']['guidelines'])
+    rmt_instance = RMT(conf, ram_info, TestResult(conf, 'signal_integrity'))
 
     if dbg_log_src_isconsole(args.source):
         print('Waiting for data from serial console' + args.source + '...')
@@ -429,25 +528,29 @@ def parse_debug_log(result, args):
 
     # Goal testplan and processors dependencies rules
     testplan = {
+        send_component_info : [ ram_info_completeness ],
+        send_rmt_results : [ rmt_instance.qualification ],
         ram_info_completeness : [ process_socket_info, process_dimm_info ],
-        rmt_instance.result_completeness : [ ram_info_completeness ],
-        rmt_instance.qualification : [ rmt_instance.result_completeness, ram_info_completeness ],
+        rmt_instance.get_worst_case : [ rmt_instance.result_completeness ],
+        rmt_instance.qualification : [ rmt_instance.get_worst_case ],
         process_socket_info : [ console_data_dummy ],
         process_dimm_info : [ console_data_dummy ]
     }
     testplan_set = dict((k, set(testplan[k])) for k in testplan)
+    print("TESTPLAN_SET:")
+    print(testplan_set)
     
     def resolve_dependecies(testplan_set, processed_funcs):
         #import pdb; pdb.set_trace()
-        #print("TESTPLAN_GEN_DICT: " + str(testplan_set))
-        print("PROCESSED_FUNCS: " + str(set(processed_funcs)))
+        print("TESTPLAN_GEN_DICT: " + str(testplan_set))
+        #logger.debug("Current processed func: " + str(set(processed_funcs)))
         # values not in keys (items without dep)
         funcs_wo_deps=set(i for v in testplan_set.values() for i in v)-set(testplan_set.keys())
 
         for p in processed_funcs:
             for k in testplan_set.keys():
                 if k == p:
-                    print("SETPLAN_P=" + str(testplan_set[k]))
+                    logger.debug("Processed func set:" + str(testplan_set[k]))
                     testplan_set.pop(k, None)
 
 
@@ -461,14 +564,14 @@ def parse_debug_log(result, args):
         testplan_set=dict(((k, v-set(processed_funcs)) for k, v in testplan_set.items() if v))
         processed_funcs = []
 #        print("TESTPLAN_GEN_DICT_CLEANED: " + str(testplan_set))
-        if len(funcs_wo_deps) != 0:
+        if len(funcs_wo_deps) != 0 and next(iter(funcs_wo_deps)) is not None:
             for supplementary_func in funcs_wo_deps:
                 if supplementary_func():
-                    print("PASS: " + str(supplementary_func))
+                    logger.debug(str(supplementary_func) + " just passed")
                     processed_funcs.append(supplementary_func)
         return testplan_set, processed_funcs
 
-    print('Parsing for data from file ' + args.source + '...')
+    logger.info('Parsing for data from file ' + args.source + '...')
 
     for line in dbg_log_data:
         ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
@@ -477,7 +580,7 @@ def parse_debug_log(result, args):
         line = line.rstrip('\r\n')
         if dbg_log_src_isconsole(args.source):
             if len(line) == 0:
-                print('.', end='')
+                logger.info('.', end='')
                 time.sleep(0.3)
                 continue
 
@@ -553,25 +656,19 @@ def parse_debug_log(result, args):
             print("Failed! Not enought data for accomplishing the goals!")
             break
 
-#    print('Configuration check:')
-    #result.component = get_ram_config(ram_info)
-
-    #environment['baseboard'] = baseboard_mfg + " " + baseboard_product
-    #environment['inventory'] = baseboard_serial
-    #environment['bmc version'] = bmc_version.lstrip('0')
-
-
 def main():
     """
     The main function
     """
-    args = argument_parsing()
-    test_name = 'signal_integrity'
     global conf
-    conf = Conf(OPTIONS, args.config, log=False)
-    result = TestResult(conf, test_name)
+    global args
+    global ram_info
+    global components
     global LED_EXISTENCE
-    
+
+    args = argument_parsing()
+    conf = Conf(OPTIONS, args.config, log=False)
+
     try:
         pwm = pca9685pw.Pca9685pw(8,PCA9685_I2C_BUS,PCA9685_I2C_ADDRESS)
         pwm.defaultAddress = PCA9685_I2C_ADDRESS
@@ -583,14 +680,7 @@ def main():
     except IOError as err:
         print("Warning! Can't find leds for highlighting failed DIMM")
 
-
-    parse_debug_log(result, args)
-#    print(json.dumps(ram_info, indent=2))
-#    print(json.dumps(result.get_result_dict(), indent=2))
-
-#    if not args.disable_sending:
-#        result.send_via_api(conf['report']['api_url'])
-
+    parse_debug_log(args)
 
 if __name__ == '__main__':
     main()
