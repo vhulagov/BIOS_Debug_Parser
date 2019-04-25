@@ -22,10 +22,6 @@ import serial
 import tty
 import termios
 
-# For LED highlighting using PCA9685
-import smbus
-import pca9685pw
-
 from rmt import RMT
 
 from benchmark.test_result import BasicTestResult
@@ -45,6 +41,9 @@ rmt_instance = None
 components = []
 
 CONF_FILE = 'MRC_parser.ini'
+
+# Led highlighting is turned off by default
+LED_EXISTENCE = False
 
 # Intel MRC base blocks
 MRC_BBLOCK_START_RE = re.compile(r'START_([0-9A-Z_]+)')
@@ -74,34 +73,6 @@ RUNTIME_BLOCK_START_MARK = 'OSBootEvent = Success'
 SMM_BLOCK_MARK = 'SMM Error Handler Entry'
 # SMBIOS data
 SMMRC_BBLOCK_MARK = 'GenerateFruSmbiosData'
-
-# Settings for PCA9685
-PCA9685_I2C_BUS = 8 # bus id
-PCA9685_I2C_ADDRESS = 0b1000000 # address pins [1][A5][A4][A3][A2][A1][A0]
-LED_PWM_FREQ = 600 # hertz 64 recomended for Servos
-
-# Led highlighting is turned off by default
-LED_EXISTENCE = False
-
-# For single socket platform
-LED_DIMM_MATCH_TABLE = {
-    '0.0.0' : 0,
-    '0.0.0' : 0,
-    '0.0.1' : 2,
-    '0.0.1' : 2,
-    '0.1.0' : 4,
-    '0.1.0' : 4,
-    '0.1.1' : 6,
-    '0.1.1' : 6,
-    '0.2.0' : 8,
-    '0.2.0' : 8,
-    '0.2.1' : 10,
-    '0.2.1' : 10,
-    '0.3.0' : 12,
-    '0.3.0' : 12,
-    '0.3.1' : 14,
-    '0.3.1' : 1
-}
 
 DMIDECODE = { 
     'BIOS': {
@@ -273,6 +244,44 @@ def serial_data(port, baudrate):
         yield debug_console.readline()
     debug_console.close()
 
+def init_leds():
+    # For LED highlighting using PCA9685
+    import smbus
+    import pca9685pw
+
+    # Settings for PCA9685
+    PCA9685_I2C_BUS = 8 # bus id
+    PCA9685_I2C_ADDRESS = 0b1000000 # address pins [1][A5][A4][A3][A2][A1][A0]
+    LED_PWM_FREQ = 600 # hertz 64 recomended for Servos
+
+    # For single socket platform
+    LED_DIMM_MATCH_TABLE = {
+        '0.0.0' : 0,
+        '0.0.0' : 0,
+        '0.0.1' : 2,
+        '0.0.1' : 2,
+        '0.1.0' : 4,
+        '0.1.0' : 4,
+        '0.1.1' : 6,
+        '0.1.1' : 6,
+        '0.2.0' : 8,
+        '0.2.0' : 8,
+        '0.2.1' : 10,
+        '0.2.1' : 10,
+        '0.3.0' : 12,
+        '0.3.0' : 12,
+        '0.3.1' : 14,
+        '0.3.1' : 1
+    }
+
+    pwm = pca9685pw.Pca9685pw(8,PCA9685_I2C_BUS,PCA9685_I2C_ADDRESS)
+    pwm.defaultAddress = PCA9685_I2C_ADDRESS
+    pwm.setFrequency(LED_PWM_FREQ)
+    pwm.reset()
+    LED_EXISTENCE = True
+    for i in range(0,16):
+      pwm.setFullOff(i)
+
 def ident_dimm(device_rank, state):
     global LED_EXISTENCE
     if LED_EXISTENCE:
@@ -418,14 +427,16 @@ def ram_info_completeness():
                             components_counter['dimms_count'] += 1
                             size, organisation = re.sub(r'([0-9]+)GB\((.*)\)', r"\1,\2", rdimm['Organisation']).split(",")
                             prod_week_norm = re.sub(r'ww([0-9][0-8]) 20([0-3][0-9])', r"\2\1", rdimm['Prod. week'])
-                            model = '{}_{}_{}'.format(rdimm['PN'], rdimm['RCD vendor'].upper(), prod_week_norm)
+                            model = '{}_{}'.format(rdimm['PN'], rdimm['RCD vendor'].upper())
                             slot = dimm_labels[str('{}.{}.{}'.format(s.split()[-1],c.split()[-1],d.split()[-1]))]
                             components.append({
                                 'type': 'RAM',
                                 'pn': rdimm['PN'],
                                 'model': model,
+                                'prod date': prod_week_norm,
                                 'serial': rdimm['SN'],
-                                'vendor': rdimm['DRAM vendor'],
+                                'vendor': rdimm['DIMM vendor'],
+                                'dram vendor': rdimm['DRAM vendor'],
                                 'size': size,
                                 'organisation': organisation.replace(" ", ""),
                                 'form factor': rdimm['Form factor'],
@@ -670,13 +681,7 @@ def main():
     conf = Conf(OPTIONS, args.config, log=False)
 
     try:
-        pwm = pca9685pw.Pca9685pw(8,PCA9685_I2C_BUS,PCA9685_I2C_ADDRESS)
-        pwm.defaultAddress = PCA9685_I2C_ADDRESS
-        pwm.setFrequency(LED_PWM_FREQ)
-        pwm.reset()
-        LED_EXISTENCE = True
-        for i in range(0,16):
-          pwm.setFullOff(i)
+        init_leds
     except IOError as err:
         print("Warning! Can't find leds for highlighting failed DIMM")
 
