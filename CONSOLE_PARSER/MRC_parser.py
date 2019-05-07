@@ -116,6 +116,7 @@ DMIDECODE = {
 CLIENT_DESCRIPTION = """Yandex R&D Debug Log parser for Intel FFM DRAM Hard Error handlers"""
 HELPS = {
     'source': 'source of test information',
+    'tags': 'append tags to test result',
     'config': 'config file path (default machinegun.ini)',
     'verbose': 'enable verbose output',
     'disable_sending': 'disable API calls and e-mail sending',
@@ -159,6 +160,7 @@ def argument_parsing():
     """
     parser = argparse.ArgumentParser(description=CLIENT_DESCRIPTION)
     parser.add_argument('source', help=HELPS['source'])
+    parser.add_argument('-T', '--tags', help=HELPS['tags'])
     parser.add_argument('-c', '--config', help=HELPS['config'],
                         default=CONF_FILE)
     parser.add_argument('-v', '--verbose', help=HELPS['verbose'],
@@ -167,61 +169,41 @@ def argument_parsing():
                         action='store_true', default=False)
     return parser.parse_args()
 
-# TODO: canonize method with benchmark-kit
-class TestResult(BasicTestResult):
-    environment = {}
-    def __init__(self, conf, name):
-        """
-        Initialization
-        """
-        self.name = name
-        self.component = []
-        self.config = conf[name]
-        self.data = {'status': 'PASSED', 'errors': []}
-        self.started_at = time.time()
-        self.finished_at = None
-
-    def save_to_file(self, filename):
-        """
-        Save test result to file
-        """
-        data_format = 'json'
-        data2save = json.dumps(self.get_result_dict(), indent=4)
-        tmpl = 'Saving test result to file {0} in {1} format'
-        msg = tmpl.format(filename, data_format)
-        logger.debug(msg)
-        try:
-            if filename == 'stdout':
-                print(data2save)
-            else:
-                with open(filename, 'a') as fhandler:
-                    fhandler.write(data2save)
-        except (OSError, IOError) as err:
-            logger.info('Result saving error: {0}'.format(err))
-            return False
-        return True
-
-    @staticmethod
-    def send_component_info(api_url):
-        global components
-        """
-        Send via API component information only
-        """
-        info_dict = {
-            'name': 'empty',
-            'component': components,
-            'result': {},
-        }
-        logger.info("Sending component info to " + api_url)
-        #logger.debug(json.dumps(info_dict))
-        response_code = yank_api(api_url, info_dict)
-        logger.debug("Responce code: " + str(response_code))
-        if response_code == 404:
-            tmpl = NO_COMPONENT
-            component_dict = components[0]
-            msg = tmpl.format(**component_dict)
-            logger.error(msg)
-            sys.exit(1)
+## TODO: canonize method with benchmark-kit
+#class TestResult(BasicTestResult):
+#    environment = {}
+#    def __init__(self, conf, name):
+#        """
+#        Initialization
+#        """
+#        self.name = name
+#        self.component = []
+#        self.config = conf[name]
+#        self.data = {'status': 'PASSED', 'errors': []}
+#        self.started_at = time.time()
+#        self.finished_at = None
+#
+#    @staticmethod
+#    def send_component_info(api_url):
+#        global components
+#        """
+#        Send via API component information only
+#        """
+#        info_dict = {
+#            'name': 'empty',
+#            'component': components,
+#            'result': {},
+#        }
+#        logger.info("Sending component info to " + api_url)
+#        logger.debug(json.dumps(info_dict, indent=2))
+#        response_code = yank_api(api_url, info_dict)
+#        logger.debug("Responce code: " + str(response_code))
+#        if response_code == 404:
+#            tmpl = NO_COMPONENT
+#            component_dict = components[0]
+#            msg = tmpl.format(**component_dict)
+#            logger.error(msg)
+#            sys.exit(1)
 
 
 def dbg_log_src_isconsole(dbg_log_data_source):
@@ -296,40 +278,44 @@ def ident_dimm(device_rank, state):
         else:
             print("Can't find leds for highlighting failed DIMM")
 
-def send_component_info():
-    global components
-    global rmt_instance
-    #logger.info("Sending components info to Benchmark...")
-    #logger.debug(json.dumps(components, indent=2))
-    rmt_instance.result.component = components
-    model = 'Unknown'
-    if rmt_instance.result.component:
-        model = rmt_instance.result.component[0].get('model')
-        if not args.disable_sending:
-            rmt_instance.result.send_component_info(conf['report']['api_url'])
-            if rmt_instance.result.send_via_api(conf['report']['api_url']):
-                logger.info(json.dumps("Result successfully sended to " + conf['report']['api_url'], indent=2))
+#def send_component_info():
+#    global components
+#    global rmt_instance
+#    logger.info("Sending components info to Benchmark...")
+#    rmt_instance.result.component = components
+#    model = 'Unknown'
+#    if rmt_instance.result.component:
+#        if not args.disable_sending:
+#            model = rmt_instance.result.component[0].get('model')
+##            print(model)
+##            rmt_instance.result.send_component_info(conf['report']['api_url'])
+#            if rmt_instance.result.send_via_api(conf['report']['api_url']):
+#                logger.info(json.dumps("Result successfully sended to " + conf['report']['api_url'], indent=2))
 
 def send_rmt_results():
     global rmt_instance
+    global components
     test_name = 'signal_integrity'
+    rmt_instance.result.environment = {}
     #environment['baseboard'] = baseboard_mfg + " " + baseboard_product
     #environment['inventory'] = baseboard_serial
     #environment['bmc version'] = bmc_version.lstrip('0')
-
+    rmt_instance.result.component = components
     rmt_instance.result.finish()
-    print(dir(rmt_instance.result))
-    print(rmt_instance.result.get_result_dict())
     model = 'Unknown'
     if rmt_instance.result.component:
         model = rmt_instance.result.component[0].get('model')
-        filename = '{0}_{1}_{2}.json'.format(model, test_name, rmt_instance.result.started_at)
-        rmt_instance.result.save_to_file(filename)
-        print(json.dumps(rmt_instance.result.get_result_dict(), indent=2))
-        if not args.disable_sending:
-            rmt_instance.result.send_component_info(conf['report']['api_url'])
-            if rmt_instance.result.send_via_api(conf['report']['api_url']):
-                logger.info(json.dumps("Result successfully sended to " + conf['report']['api_url'], indent=2))
+#    tags = [model]
+#    if args.tags:
+#        tags.extend(tag.strip() for tag in args.tags.split(','))
+#    rmt_instance.result.add_tags(tags)
+
+    print(json.dumps(rmt_instance.result.get_result_dict(), indent=2))
+    if not args.disable_sending:
+#        response_code = yank_api(conf['report']['api_url'], rmt_instance.result.get_result_dict())
+#        logger.debug("Responce code: " + str(response_code))
+        if rmt_instance.result.send_via_api(conf['report']['api_url']):
+            logger.info("Result successfully sended to " + conf['report']['api_url'])
 
 def process_socket_info(dbg_log_block, dbg_block_name, socket_id):
     print("Processing Socket info table...")
@@ -498,7 +484,7 @@ def parse_debug_log(args):
     """
     #import pdb; pdb.set_trace()
     test_configuration = []
-    environment = {}
+    tags = {}
     testplan = defaultdict(list)
 
     global rmt_dblock_counter
@@ -514,7 +500,8 @@ def parse_debug_log(args):
     mrc_fatal_error_catched = False
     current_processing_block_ended = False
 
-    rmt_instance = RMT(conf, ram_info, TestResult(conf, 'signal_integrity'))
+    rmt_instance = RMT(conf, ram_info, BasicTestResult(conf, 'signal_integrity', components))
+    #rmt_instance = RMT(conf, ram_info, TestResult(conf, 'signal_integrity'))
 
     if dbg_log_src_isconsole(args.source):
         print('Waiting for data from serial console' + args.source + '...')
@@ -539,11 +526,11 @@ def parse_debug_log(args):
 
     # Goal testplan and processors dependencies rules
     testplan = {
-        send_component_info : [ ram_info_completeness ],
+#        send_component_info : [ ram_info_completeness ],
         send_rmt_results : [ rmt_instance.qualification ],
         ram_info_completeness : [ process_socket_info, process_dimm_info ],
         rmt_instance.get_worst_case : [ rmt_instance.result_completeness ],
-        rmt_instance.qualification : [ rmt_instance.get_worst_case ],
+        rmt_instance.qualification : [ rmt_instance.get_worst_case, ram_info_completeness ],
         process_socket_info : [ console_data_dummy ],
         process_dimm_info : [ console_data_dummy ]
     }
