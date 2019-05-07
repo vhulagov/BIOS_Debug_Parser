@@ -169,43 +169,6 @@ def argument_parsing():
                         action='store_true', default=False)
     return parser.parse_args()
 
-## TODO: canonize method with benchmark-kit
-#class TestResult(BasicTestResult):
-#    environment = {}
-#    def __init__(self, conf, name):
-#        """
-#        Initialization
-#        """
-#        self.name = name
-#        self.component = []
-#        self.config = conf[name]
-#        self.data = {'status': 'PASSED', 'errors': []}
-#        self.started_at = time.time()
-#        self.finished_at = None
-#
-#    @staticmethod
-#    def send_component_info(api_url):
-#        global components
-#        """
-#        Send via API component information only
-#        """
-#        info_dict = {
-#            'name': 'empty',
-#            'component': components,
-#            'result': {},
-#        }
-#        logger.info("Sending component info to " + api_url)
-#        logger.debug(json.dumps(info_dict, indent=2))
-#        response_code = yank_api(api_url, info_dict)
-#        logger.debug("Responce code: " + str(response_code))
-#        if response_code == 404:
-#            tmpl = NO_COMPONENT
-#            component_dict = components[0]
-#            msg = tmpl.format(**component_dict)
-#            logger.error(msg)
-#            sys.exit(1)
-
-
 def dbg_log_src_isconsole(dbg_log_data_source):
     if stat.S_ISCHR(os.stat(dbg_log_data_source).st_mode):
         return True;
@@ -277,20 +240,6 @@ def ident_dimm(device_rank, state):
             pwm.setPercent(led_id,severity_mapping[state])
         else:
             print("Can't find leds for highlighting failed DIMM")
-
-#def send_component_info():
-#    global components
-#    global rmt_instance
-#    logger.info("Sending components info to Benchmark...")
-#    rmt_instance.result.component = components
-#    model = 'Unknown'
-#    if rmt_instance.result.component:
-#        if not args.disable_sending:
-#            model = rmt_instance.result.component[0].get('model')
-##            print(model)
-##            rmt_instance.result.send_component_info(conf['report']['api_url'])
-#            if rmt_instance.result.send_via_api(conf['report']['api_url']):
-#                logger.info(json.dumps("Result successfully sended to " + conf['report']['api_url'], indent=2))
 
 def send_rmt_results():
     global rmt_instance
