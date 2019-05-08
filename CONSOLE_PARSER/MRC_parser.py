@@ -37,6 +37,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
+# Exit error codes
+ERROR_CODES = {
+    'homogeneity' : 102,
+    'poppulation' : 103,
+    'ddr_frequency' : 104,
+    'data_missing' : 120
+}
+
 rmt_instance = None
 components = []
 
@@ -335,9 +343,9 @@ def process_dimm_info(dbg_log_block, dbg_block_name, socket_id):
                           key = line[0]
                           ram_info[socket_id][key] = value
 
-def ram_info_completeness():
+def ram_conf_validator():
     logger.debug('Checking RAM info completeness...')
-    ram_config_status = False
+    global ERROR_CODES
     global ram_info
     global conf
     global components
@@ -347,6 +355,9 @@ def ram_info_completeness():
         'channels_count' : 0,
         'dimms_count' : 0
     }
+    ram_config_status = {}
+    ec = None
+
     dimm_labels = yaml.load(open(conf['node_configuration']['dimm_labels']))
 #    logger.debug("RAM_INFO")
 #    logger.debug(json.dumps(ram_info, indent=2))
@@ -382,16 +393,33 @@ def ram_info_completeness():
 
     logger.debug(json.dumps(components_counter, indent=2))
 
-    # Validate fullness of ram_info data
-    #print(Counter(value for values in ram_info.itervalues() for value in values))
-#    if ram_info.items.count() == components_counter[sockets_count] and
-#       node_configuration['sockets_count'] == sum('Socket' in s for s in ram_info.items())
-#        all(ram_info.items for s in range(
-#    logger.debug("RAM_component_counter")
-#    logger.debug("Counter:" + str(components_counter[x]) + ", " + "Config.:" + str(node_configuration[x]))
+    # Check that all RDIMMs are same
+    ram_config_status['homogeneity'] = all(components[0]['model'] == dimm['model'] for dimm in components[1:])
+    if not ram_config_status['homogeneity']:
+        ram_rdimm_pns_set = set(dimm['model'] for dimm in components)
+        logger.error("Wrong RAM config: RDIMMs are not the same! Founded: " + ' '.join(ram_rdimm_pns_set))
+        ec = ERROR_CODES['homogeneity']
 
-    ram_config_status = all(components_counter[x] == node_configuration[x] for x in components_counter.keys())
-    ram_rdimm_pns_set = set(dimm['model'] for dimm in components)
+    # Check DIMM poppulation
+    # TODO: add function to validate poppulation if DIMM less than 24 pcs
+    ram_config_status['poppulation'] = all(components_counter[x] == node_configuration[x] for x in components_counter.keys())
+    if not ram_config_status['poppulation']:
+        logger.error("DIMM poppulation is wrong:\n" + json.dumps(components_counter, indent=2) + "\n, instead POR:\n" + json.dumps(node_configuration, indent=2))
+        ec = ERROR_CODES['poppulation']
+
+    # Check frequency
+    ddr_freq = int(ram_info['System']['DDR Freq'].lstrip('DDR4-'))
+    if ddr_freq == node_configuration['por_ram_freq']:
+        ram_config_status['ddr_frequency'] = True
+    else:
+        ram_config_status['ddr_frequency'] = False
+        logger.error('Wrong RAM config: RAM initializated at ' + str(ddr_freq) + ' MT/s instead of ' + str(por_ram_freq) + ' MT/s')
+        ec = ERROR_CODES['ddr_frequency']
+
+    if all(ram_config_status[s] for s in ram_config_status.keys()):
+        logger.info('Founded ' + components[0]['vendor'] + ' ' + components[0]['model'] + ' with POR poppulation')
+    else:
+        sys.exit(ec)
 
     return ram_config_status
 
@@ -475,11 +503,11 @@ def parse_debug_log(args):
 
     # Goal testplan and processors dependencies rules
     testplan = {
-#        send_component_info : [ ram_info_completeness ],
+#        send_component_info : [ ram_conf_validator ],
         send_rmt_results : [ rmt_instance.qualification ],
-        ram_info_completeness : [ process_socket_info, process_dimm_info ],
+        ram_conf_validator : [ process_socket_info, process_dimm_info ],
         rmt_instance.get_worst_case : [ rmt_instance.result_completeness ],
-        rmt_instance.qualification : [ rmt_instance.get_worst_case, ram_info_completeness ],
+        rmt_instance.qualification : [ rmt_instance.get_worst_case, ram_conf_validator ],
         process_socket_info : [ console_data_dummy ],
         process_dimm_info : [ console_data_dummy ]
     }
