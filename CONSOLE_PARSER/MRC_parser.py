@@ -358,7 +358,7 @@ def ram_conf_validator():
     ram_config_status = {}
     ec = None
 
-    dimm_labels = yaml.load(open(conf['node_configuration']['dimm_labels']))
+    dimm_labels = yaml.load(open(conf['node_configuration']['dimm_labels']), Loader=yaml.BaseLoader)
 #    logger.debug("RAM_INFO")
 #    logger.debug(json.dumps(ram_info, indent=2))
     # TODO: rewrite to list comprehension?
@@ -413,7 +413,7 @@ def ram_conf_validator():
         ram_config_status['ddr_frequency'] = True
     else:
         ram_config_status['ddr_frequency'] = False
-        logger.error('Wrong RAM config: RAM initializated at ' + str(ddr_freq) + ' MT/s instead of ' + str(por_ram_freq) + ' MT/s')
+        logger.error('Wrong RAM config: RAM initializated at ' + str(ddr_freq) + ' MT/s instead of ' + str(node_configuration['por_ram_freq']) + ' MT/s')
         ec = ERROR_CODES['ddr_frequency']
 
     if all(ram_config_status[s] for s in ram_config_status.keys()):
