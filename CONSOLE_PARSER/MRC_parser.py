@@ -342,6 +342,7 @@ def process_dimm_info(dbg_log_block, dbg_block_name, socket_id):
                       else:
                           key = line[0]
                           ram_info[socket_id][key] = value
+    return ram_info['System']['DDR Freq'].isdigit()
 
 def ram_conf_validator():
     logger.debug('Checking RAM info completeness...')
@@ -435,6 +436,21 @@ def process_mbist(dbg_log_block, dbg_block_name, socket_id):
             print('Founded DQ error in ' + failed_device)
             ident_dimm(failed_device,'warning')
         
+def process_step(dbg_log_block, dbg_block_name, socket_id):
+    print('STEP PROCESSING...')
+    for line in dbg_log_block:
+        #print(line)
+        #[FailedPatternBitMask 0x2] N1.C5.D0. FAIL: R1.CID0.BG2.BA3.ROW:0x0001a.COL:0x3f8.DQ24.
+        STEP_FAILED_PATTER_RE = r'[FailedPatternBitMask (0x[0-9]+)] N([0-4]).C([0-6]).D([0-3]). FAIL: R[0-1].CID([0-9]).BG([0-9]).BA([0-9]).ROW:(0x[0-9a-f]*).COL:(0x[0-9a-f].DQ([0-7][0-9]).'
+        failed_rank_match = re.match(STEP_FAILED_PATTER_RE, line)
+        if failed_rank_match:
+            print(failed_rank_match)
+#            #failed_device = ''.join(e for e in failed_rank_match.group(1) if e.isalnum())
+#            #failed_device = ''.join(filter(str.isalnum, failed_rank_match.group(1)))
+#            failed_device = '.'.join(failed_rank_match.group(1,2,3))
+#            print('Founded DQ error in ' + failed_device)
+#            ident_dimm(failed_device,'warning')
+
 def process_training_info(dbg_log_block, dbg_block_name, socket_id):
     for line in dbg_log_block:
         failed_rank_match = re.match(r'.*(N[0-9].C[0-6].D[0-3].R[0-9]).S[01][0-9]: Failed RdDqDqs', line)
@@ -495,6 +511,7 @@ def parse_debug_log(args):
             'RMT_N1' : rmt_instance.process_rmt_results,
             'Rx Dq/Dqs Basic' : process_training_info,
 #            'MemTest' : process_mbist,
+            '@SEC Run CPGC Test' : process_step,
             'Corrected Memory Error' : process_smm_ce_handler
     }
 
@@ -507,6 +524,7 @@ def parse_debug_log(args):
         send_rmt_results : [ rmt_instance.qualification ],
         ram_conf_validator : [ process_socket_info, process_dimm_info ],
         rmt_instance.get_worst_case : [ rmt_instance.result_completeness ],
+        rmt_instance.result_completeness : [ process_dimm_info ],
         rmt_instance.qualification : [ rmt_instance.get_worst_case, ram_conf_validator ],
         process_socket_info : [ console_data_dummy ],
         process_dimm_info : [ console_data_dummy ]
@@ -608,11 +626,15 @@ def parse_debug_log(args):
                         if not socket_id:
                             socket_id = None
                         #print(block_buffer[current_processing_block_name])
-                        func(block_buffer[current_processing_block_name], current_processing_block_name, socket_id)
-                        processed_funcs.append(func)
-#                        print("BEFORE: " + str(block_processing_queue[-1].keys()))
-                        block_processing_queue.pop()
-                        mrc_fatal_error_catched = False
+                        try:
+                            func(block_buffer[current_processing_block_name], current_processing_block_name, socket_id)
+                            processed_funcs.append(func)
+#                           print("BEFORE: " + str(block_processing_queue[-1].keys()))
+                            block_processing_queue.pop()
+                            mrc_fatal_error_catched = False
+                        except:
+                            logger.info("Failed to process " + str(current_processing_block_name) + " with func.: " + str(func))
+                            pass
                         # Check for possibility to run supplimentary functions and execute them if possible
                         if testplan.keys():
                             testplan_set, processed_funcs = resolve_dependecies(testplan_set, processed_funcs)
