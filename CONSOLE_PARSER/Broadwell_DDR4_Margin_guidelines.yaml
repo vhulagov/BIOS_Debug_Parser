@@ -8,90 +8,51 @@
 # TxV- (TxVLow) Write DQ VREF margin, low side direction
 # TxV+ (TxVHigh) Write DQ VREF margin, high side direction
 
-MY70-EX0-Y3N:
-  POR:
-    slots_count: 16
-    ram_freq: 2133
-    cpu_nodes: 2
-    mem_channels: 4
-    dimm_per_channel: 2
+POR:
+  slots_count: 16
+  ram_freq: 2133
+  cpu_nodes: 2
+  mem_channels: 4
+  dimm_per_channel: 2
 
-  DDR4-2400:
-    RxDqs-: 13
-    RxDqs+: 13
-    TxDq-: 13
-    TxDq+: 13
+DDR4-2400:
+  RxDqs-: 13
+  RxDqs+: 13
+  TxDq-: 13
+  TxDq+: 13
 
-  DDR4-2133:
-    RxDqs-: 13
-    RxDqs+: 13
-    TxDq-: 13
-    TxDq+: 13
+DDR4-2133:
+  RxDqs-: 13
+  RxDqs+: 13
+  TxDq-: 13
+  TxDq+: 13
 
-  DDR4-1867:
-    RxDqs-: 12
-    RxDqs+: 12
-    TxDq-: 12
-    TxDq+: 12
+DDR4-1867:
+  RxDqs-: 12
+  RxDqs+: 12
+  TxDq-: 12
+  TxDq+: 12
 
-  DDR4-1600:
-    RxDqs-: 10
-    RxDqs+: 10
-    TxDq-: 10
-    TxDq+: 10
+DDR4-1600:
+  RxDqs-: 10
+  RxDqs+: 10
+  TxDq-: 10
+  TxDq+: 10
 
-  DDR4-1333:
-    RxDqs-: 9
-    RxDqs+: 9
-    TxDq-: 9
-    TxDq+: 9
+DDR4-1333:
+  RxDqs-: 9
+  RxDqs+: 9
+  TxDq-: 9
+  TxDq+: 9
 
-  common:
-    RxV-: 14
-    RxV+: 14
-    TxV-: 10
-    TxV+: 10
-    CmdV-: 13
-    CmdV+: 13
-    Cmd-: 20
-    Cmd+: 20
-    Ctl-: 20
-    Ctl+: 20
-
-MY81-EX0-Y3N:
-  POR:
-    slots_count: 24
-    ram_freq: 2666
-    cpu_nodes: 2
-    mem_channels: 6
-    dimm_per_channel: 2
-
-  DDR4-2933:
-    RxDqs-: 10
-    RxDqs+: 10
-    TxDq-: 11
-    TxDq+: 11
-
-  DDR4-2666:
-    RxDqs-: 10
-    RxDqs+: 10
-    TxDq-: 11
-    TxDq+: 11
-
-  DDR4-2400:
-    RxDqs-: 10
-    RxDqs+: 10
-    TxDq-: 11
-    TxDq+: 11
-
-  common:
-    RxV-: 12
-    RxV+: 12
-    TxV-: 10
-    TxV+: 10
-    CmdV-: 12
-    CmdV+: 12
-    Cmd-: 19
-    Cmd+: 19
-    Ctl-: 19
-    Ctl+: 19
+common:
+  RxV-: 14
+  RxV+: 14
+  TxV-: 10
+  TxV+: 10
+  CmdV-: 13
+  CmdV+: 13
+  Cmd-: 20
+  Cmd+: 20
+  Ctl-: 20
+  Ctl+: 20

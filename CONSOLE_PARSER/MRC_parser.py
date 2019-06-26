@@ -23,10 +23,11 @@ import tty
 import termios
 
 from rmt import RMT
+from step import STEP
 
 from benchmark.test_result import BasicTestResult
 from benchmark.common import yank_api
-from benchmark.conf import Conf, parse_list
+from benchmark.conf import Conf, parse_list, parse_bool
 
 sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
 
@@ -47,6 +48,7 @@ ERROR_CODES = {
 
 rmt_instance = None
 components = []
+environment = {}
 
 CONF_FILE = 'MRC_parser.ini'
 
@@ -64,6 +66,11 @@ MRC_iMC_BLOCK_END_RE = re.compile(r'(^[A-Z].*) [-]?[=]? ([0-9]+)[ ]?ms')
 # Intel SMM handlers sample code
 MRC_SMM_BLOCK_START_RE = re.compile(r'(.*) Hander start!')
 MRC_SMM_BLOCK_END_RE = re.compile(r'(.*) Hander end!')
+
+# UEFI ACPI functions
+#MRC_ACPI_START_RE = re.compile(r'^(.*): Class ID:  [0-9][0-9]')
+MRC_ACPI_START_RE = re.compile(r'^(.*): Class ID:.*')
+MRC_ACPI_END_RE = re.compile(r'^(.*) Exiting...')
 
 # MRC Fatal Error
 MRC_FATAL_ERROR_RE = re.compile(r'Major Code = [0-9]+, Minor Code = [0-9]+')
@@ -126,6 +133,7 @@ HELPS = {
     'source': 'source of test information',
     'tags': 'append tags to test result',
     'config': 'config file path (default machinegun.ini)',
+    'goal': 'the final goal of activity',
     'verbose': 'enable verbose output',
     'disable_sending': 'disable API calls and e-mail sending',
 }
@@ -141,9 +149,10 @@ OPTIONS = {
         'smtp_relay': (str, 'outbound-relay.yandex.net'),
         'mail_to': (parse_list, [])
     },  
-    'signal_integrity': {
-        'rmt_repeats' : (int, 5), 
-        'guidelines' : (str, 'CascadeLake_DDR4_Margin_guidelines.yaml')
+    'checks': {
+        'check_poppulation' : (parse_bool, True),
+        'check_frequency' : (parse_bool, True),
+        'check_homogenity' : (parse_bool, True)
     },
     'node_configuration': {
         'por_ram_freq' : (int, 2666),
@@ -152,6 +161,15 @@ OPTIONS = {
         'channels_count' : (int, 12),
         'dimm_per_channel' : (int, 2),
         'dimm_labels' : (str, 'MY81-EX0-Y3N_dimm_labels.yaml')
+    },
+    'goal': {
+        'name' : (str, 'RMT'),
+    },
+    'RMT': {
+        'repeats' : (int, 5),
+        'guidelines' : (str, 'CascadeLake_DDR4_Margin_guidelines.yaml')
+    },
+    'STEP': {
     }
 }
 
@@ -249,33 +267,42 @@ def ident_dimm(device_rank, state):
         else:
             print("Can't find leds for highlighting failed DIMM")
 
-def send_rmt_results():
-    global rmt_instance
-    global components
-    test_name = 'signal_integrity'
-    rmt_instance.result.environment = {}
-    #environment['baseboard'] = baseboard_mfg + " " + baseboard_product
-    #environment['inventory'] = baseboard_serial
-    #environment['bmc version'] = bmc_version.lstrip('0')
-    rmt_instance.result.component = components
-    rmt_instance.result.finish()
-    model = 'Unknown'
-    if rmt_instance.result.component:
-        model = rmt_instance.result.component[0].get('model')
-#    tags = [model]
-#    if args.tags:
-#        tags.extend(tag.strip() for tag in args.tags.split(','))
-#    rmt_instance.result.add_tags(tags)
+def console_data_dummy():
+    return False
 
-    print(json.dumps(rmt_instance.result.get_result_dict(), indent=2))
-    if not args.disable_sending:
-#        response_code = yank_api(conf['report']['api_url'], rmt_instance.result.get_result_dict())
-#        logger.debug("Responce code: " + str(response_code))
-        if rmt_instance.result.send_via_api(conf['report']['api_url']):
-            logger.info("Result successfully sended to " + conf['report']['api_url'])
+def process_chassis_info(dbg_log_block, dbg_block_name, socket_id):
+    global environment
+    logger.info("Processing chassis info...")
+    sys_vendor_re = re.compile(r'SystemManufacturer: UpdateStr: (.*)')
+    product_name_re = re.compile(r' SystemProductName: UpdateStr: (.*)')
+    inventory_re = re.compile(r'SystemSerialNumber: UpdateStr: ([0-9]*)')
+    baseboard_vendor_re = re.compile(r'BaseBoardManufacturer: UpdateStr: (.*)')
+    baseboard_model_re = re.compile(r'BaseBoardProductName: UpdateStr: (.*)')
+    environment_regs = {
+        'sys_vendor' : sys_vendor_re,
+        'product_name' : product_name_re,
+        'inventory' : inventory_re,
+        'baseboard_vendor' : baseboard_vendor_re,
+        'baseboard_model' : baseboard_model_re
+        }
+
+    for line in dbg_log_block:
+        for k in environment_regs.keys():
+            match = re.search(environment_regs[k], line)
+            if match is not None:
+                environment[k] = match.group(1)
+                break
+
+    if environment['inventory'] and environment['baseboard_model']:
+        logger.debug(environment)
+        logger.info("...success")
+        #TODO Check for current test
+        if rmt_instance:
+            rmt_instance.result.environment = environment
+        return True
 
 def process_socket_info(dbg_log_block, dbg_block_name, socket_id):
-    print("Processing Socket info table...")
+    logger.info("Processing Socket info table...")
     global ram_info
     header = ''
     param_id = 0
@@ -392,40 +419,47 @@ def ram_conf_validator():
                                 'slot': slot
                             })
 
-    logger.debug(json.dumps(components_counter, indent=2))
+    #logger.debug(json.dumps(components_counter, indent=2))
 
-    # Check that all RDIMMs are same
-    ram_config_status['homogeneity'] = all(components[0]['model'] == dimm['model'] for dimm in components[1:])
-    if not ram_config_status['homogeneity']:
-        ram_rdimm_pns_set = set(dimm['model'] for dimm in components)
-        logger.error("Wrong RAM config: RDIMMs are not the same! Founded: " + ' '.join(ram_rdimm_pns_set))
-        ec = ERROR_CODES['homogeneity']
+    if conf['checks']['check_homogenity']:
+        # Check that all RDIMMs are same
+        ram_config_status['homogeneity'] = all(components[0]['model'] == dimm['model'] for dimm in components[1:])
+        if not ram_config_status['homogeneity']:
+            ram_rdimm_pns_set = set(dimm['model'] for dimm in components)
+            logger.error("Wrong RAM config: RDIMMs are not the same! Founded: " + ' '.join(ram_rdimm_pns_set))
+            ec = ERROR_CODES['homogeneity']
 
-    # Check DIMM poppulation
-    # TODO: add function to validate poppulation if DIMM less than 24 pcs
-    ram_config_status['poppulation'] = all(components_counter[x] == node_configuration[x] for x in components_counter.keys())
-    if not ram_config_status['poppulation']:
-        logger.error("DIMM poppulation is wrong:\n" + json.dumps(components_counter, indent=2) + "\n, instead POR:\n" + json.dumps(node_configuration, indent=2))
-        ec = ERROR_CODES['poppulation']
+    if conf['checks']['check_poppulation']:
+        # Check DIMM poppulation
+        # TODO: add function to validate poppulation if DIMM less than 24 pcs
+        ram_config_status['poppulation'] = all(components_counter[x] == node_configuration[x] for x in components_counter.keys())
+        if not ram_config_status['poppulation']:
+            logger.error("DIMM poppulation is wrong:\n" + json.dumps(components_counter, indent=2) + "\n, instead POR:\n" + json.dumps(node_configuration, indent=2))
+            ec = ERROR_CODES['poppulation']
 
-    # Check frequency
-    ddr_freq = int(ram_info['System']['DDR Freq'].lstrip('DDR4-'))
-    if ddr_freq == node_configuration['por_ram_freq']:
-        ram_config_status['ddr_frequency'] = True
-    else:
-        ram_config_status['ddr_frequency'] = False
-        logger.error('Wrong RAM config: RAM initializated at ' + str(ddr_freq) + ' MT/s instead of ' + str(node_configuration['por_ram_freq']) + ' MT/s')
-        ec = ERROR_CODES['ddr_frequency']
+    if conf['checks']['check_frequency']:
+        # Check frequency
+        ddr_freq = int(ram_info['System']['DDR Freq'].lstrip('DDR4-'))
+        if ddr_freq == node_configuration['por_ram_freq']:
+            ram_config_status['ddr_frequency'] = True
+        else:
+            ram_config_status['ddr_frequency'] = False
+            logger.error('Wrong RAM config: RAM initializated at ' + str(ddr_freq) + ' MT/s instead of ' + str(node_configuration['por_ram_freq']) + ' MT/s')
+            ec = ERROR_CODES['ddr_frequency']
 
     if all(ram_config_status[s] for s in ram_config_status.keys()):
-        logger.info('Founded ' + components[0]['vendor'] + ' ' + components[0]['model'] + ' with POR poppulation')
+        logger.info('Founded ' + components[0]['vendor'] + ' ' + components[0]['model'])
     else:
         sys.exit(ec)
+
+    #TODO Check for current test
+    if rmt_instance:
+        rmt_instance.result.component = components
 
     return ram_config_status
 
 def process_mbist(dbg_log_block, dbg_block_name, socket_id):
-    print('MBIST_PROCESSING...')
+    logger.info('Processing MemTest...')
     for line in dbg_log_block:
         #print(line)
         failed_rank_match = re.match(r'.*(N[0-9].C[0-6].D[0-3].R[0-9]): MemTest Failure!', line)
@@ -437,7 +471,7 @@ def process_mbist(dbg_log_block, dbg_block_name, socket_id):
             ident_dimm(failed_device,'warning')
         
 def process_step(dbg_log_block, dbg_block_name, socket_id):
-    print('STEP PROCESSING...')
+    logger.info('Processing STEP...')
     for line in dbg_log_block:
         #print(line)
         #[FailedPatternBitMask 0x2] N1.C5.D0. FAIL: R1.CID0.BG2.BA3.ROW:0x0001a.COL:0x3f8.DQ24.
@@ -460,7 +494,7 @@ def process_training_info(dbg_log_block, dbg_block_name, socket_id):
             ident_dimm(failed_device,'critical')
 
 def process_smm_ce_handler(dbg_log_block, dbg_block_name, socket_id):
-    print("Processing Runtime SMM handlers output...")
+    logger.info("Processing Runtime SMM handlers output...")
 #    print(dbg_log_block)
     for line in dbg_log_block:
         failed_rank_match = re.match(r'Last Err Info Node=([0-9]) ddrch=([0-9]] dimm=([0]) rank=([1])', line)
@@ -471,6 +505,7 @@ def process_smm_ce_handler(dbg_log_block, dbg_block_name, socket_id):
 
 def parse_debug_log(args):
     global rmt_instance
+    global conf
     # TODO: rewrite to class?
     """
     Parse Serial Debug Log for RDIMM/DRAM errors and call specific handlers 
@@ -480,21 +515,21 @@ def parse_debug_log(args):
     tags = {}
     testplan = defaultdict(list)
 
-    global rmt_dblock_counter
-    rmt_dblock_counter = defaultdict(int)
-    rmt_data_required = defaultdict(int)
+#    global rmt_dblock_counter
+#    rmt_dblock_counter = defaultdict(int)
+#    rmt_data_required = defaultdict(int)
+    rmt_instance = {}
+
     processed_funcs = []
-
     func_counter = defaultdict(int)
-
     block_buffer = defaultdict(list)
     block_processing_queue = []
     mrc_block_name = ''
     mrc_fatal_error_catched = False
     current_processing_block_ended = False
 
-    rmt_instance = RMT(conf, ram_info, BasicTestResult(conf, 'signal_integrity', components))
-    #rmt_instance = RMT(conf, ram_info, TestResult(conf, 'signal_integrity'))
+    if conf['goal']['name'] == 'RMT':
+        rmt_instance = RMT(conf, ram_info, BasicTestResult(conf, conf['goal']['name'], components))
 
     if dbg_log_src_isconsole(args.source):
         print('Waiting for data from serial console' + args.source + '...')
@@ -503,39 +538,39 @@ def parse_debug_log(args):
         dbg_log_data = open(args.source)
 
     dbg_block_processing_rules = { 
+            'InitFruStrings' : process_chassis_info,
             'DIMMINFO_TABLE' : process_dimm_info,
             'SOCKET_0_TABLE' : process_socket_info,
             'SOCKET_1_TABLE' : process_socket_info,
-            'BSSA_RMT' : rmt_instance.process_rmt_results,
-            'RMT_N0' : rmt_instance.process_rmt_results,
-            'RMT_N1' : rmt_instance.process_rmt_results,
-            'Rx Dq/Dqs Basic' : process_training_info,
-#            'MemTest' : process_mbist,
             '@SEC Run CPGC Test' : process_step,
+#            'BSSA_RMT' : rmt_instance.process_rmt_results,
+#            'RMT_N0' : rmt_instance.process_rmt_results,
+#            'RMT_N1' : rmt_instance.process_rmt_results,
+            'Rx Dq/Dqs Basic' : process_training_info,
+            'MemTest' : process_mbist,
             'Corrected Memory Error' : process_smm_ce_handler
     }
-
-    def console_data_dummy():
-        return False
+    if rmt_instance:
+        dbg_block_processing_rules.update(rmt_instance.processing_rules())
 
     # Goal testplan and processors dependencies rules
+    # Base part:
     testplan = {
-#        send_component_info : [ ram_conf_validator ],
-        send_rmt_results : [ rmt_instance.qualification ],
         ram_conf_validator : [ process_socket_info, process_dimm_info ],
-        rmt_instance.get_worst_case : [ rmt_instance.result_completeness ],
-        rmt_instance.result_completeness : [ process_dimm_info ],
-        rmt_instance.qualification : [ rmt_instance.get_worst_case, ram_conf_validator ],
+#        process_chassis_info : [ console_data_dummy ],
         process_socket_info : [ console_data_dummy ],
         process_dimm_info : [ console_data_dummy ]
     }
+    if rmt_instance:
+        testplan.update(rmt_instance.testplan())
+    #testplan_set = dict((globals()[k], set(testplan[globals()[k]])) for k in testplan)
+    #testplan_set = dict((eval(k), set(testplan[eval(k)])) for k in testplan)
+
     testplan_set = dict((k, set(testplan[k])) for k in testplan)
-    print("TESTPLAN_SET:")
-    print(testplan_set)
-    
+
     def resolve_dependecies(testplan_set, processed_funcs):
         #import pdb; pdb.set_trace()
-        print("TESTPLAN_GEN_DICT: " + str(testplan_set))
+        #print("TESTPLAN_GEN_DICT: " + str(testplan_set))
         #logger.debug("Current processed func: " + str(set(processed_funcs)))
         # values not in keys (items without dep)
         funcs_wo_deps=set(i for v in testplan_set.values() for i in v)-set(testplan_set.keys())
@@ -564,7 +599,7 @@ def parse_debug_log(args):
                     processed_funcs.append(supplementary_func)
         return testplan_set, processed_funcs
 
-    logger.info('Parsing for data from file ' + args.source + '...')
+    logger.info('Parsing data from file ' + args.source + '...')
 
     for line in dbg_log_data:
         ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
@@ -580,14 +615,19 @@ def parse_debug_log(args):
             print('*', end='')
 
         dbg_block_name = ''
+
+        if MRC_ACPI_START_RE.match(line):
+            dbg_block_name = MRC_ACPI_START_RE.match(line).group(1)
+            dbg_block_end_re = MRC_ACPI_END_RE
+
         if MRC_BBLOCK_START_RE.match(line):
             dbg_block_name = MRC_BBLOCK_START_RE.match(line).group(1)
             dbg_block_end_re = MRC_BBLOCK_END_RE
 
         if MRC_iMC_BLOCK_START_RE.match(line):
+            logger.debug("Founded MRC block: " + line)
             dbg_block_name = MRC_iMC_BLOCK_START_RE.match(line).group(1)
             dbg_block_end_re = MRC_iMC_BLOCK_END_RE
-            #print(dbg_block_name)
 
         if MRC_SMM_BLOCK_START_RE.match(line):
             dbg_block_name = MRC_SMM_BLOCK_START_RE.match(line).group(1)
@@ -644,14 +684,16 @@ def parse_debug_log(args):
                     block_buffer[current_processing_block_name].append(line)
 
     n = 0
-    print("LAST_CHANCE: " + str(testplan_set))
-    testplan_set.pop(console_data_dummy, None)
-    while testplan_set:
-        testplan_set, processed_funcs = resolve_dependecies(testplan_set, processed_funcs)
-        n += 1
-        if n > 10:
-            print("Failed! Not enought data for accomplishing the goals!")
-            break
+    if testplan_set:
+        logger.debug("Last chance to reach the goal (" + conf['goal']['name'] + "): " + str(testplan_set))
+        testplan_set.pop(console_data_dummy, None)
+        while testplan_set:
+            testplan_set, processed_funcs = resolve_dependecies(testplan_set, processed_funcs)
+            n += 1
+            if n > 10:
+                logger.error("Failed! Not enough data for accomplish the goals!")
+                logger.error(testplan_set.keys())
+                break
 
 def main():
     """
@@ -661,6 +703,7 @@ def main():
     global args
     global ram_info
     global components
+    global environment
     global LED_EXISTENCE
 
     args = argument_parsing()
