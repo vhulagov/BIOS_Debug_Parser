@@ -60,8 +60,8 @@ MRC_BBLOCK_START_RE = re.compile(r'START_([0-9A-Z_]+)')
 MRC_BBLOCK_END_RE = re.compile(r'STOP_([0-9A-Z_]+)')
 
 # Intel MRC iMC blocks functions
-MRC_iMC_BLOCK_START_RE = re.compile(r'(^[A-Z].*) -- Started')
-MRC_iMC_BLOCK_END_RE = re.compile(r'(^[A-Z].*) [-]?[=]? ([0-9]+)[ ]?ms')
+MRC_iMC_BLOCK_START_RE = re.compile(r'(^[A-Z@].*) -- Started')
+MRC_iMC_BLOCK_END_RE = re.compile(r'(^[A-Z@].*) [-]?[=]? ([0-9]+)[ ]?ms')
 
 # Intel SMM handlers sample code
 MRC_SMM_BLOCK_START_RE = re.compile(r'(.*) Hander start!')
@@ -88,45 +88,6 @@ RUNTIME_BLOCK_START_MARK = 'OSBootEvent = Success'
 SMM_BLOCK_MARK = 'SMM Error Handler Entry'
 # SMBIOS data
 SMMRC_BBLOCK_MARK = 'GenerateFruSmbiosData'
-
-DMIDECODE = { 
-    'BIOS': {
-        'Vendor': 'vendor',
-        'Version': 'version',
-        'Release Date': 'date',
-        'BIOS Revision': 'revision',
-    },  
-    'Base Board': {
-        'Manufacturer': 'vendor',
-        'Product Name': 'model',
-        'Serial Number': 'serial',
-    },  
-    'System': {
-        'Manufacturer': 'vendor',
-        'Product Name': 'model',
-        'Serial Number': 'serial',
-    },  
-    'Processor': {
-        'Manufacturer': 'vendor',
-        'Family': 'family',
-        'Version': 'model',
-        'Max Speed': 'speed',
-        'Serial Number': 'serial',
-    },  
-    'Memory': {
-        'Locator': 'locator',
-        'Type': 'type',
-        'Speed': 'speed',
-        'Configured Clock Speed': 'current speed',
-        'Manufacturer': 'vendor',
-        'Part Number': 'part number',
-        'Form Factor': 'form factor',
-        'Size': 'size',
-        'Serial Number': 'serial',
-        'Array Handle': 'array',
-    },  
-}
-
 
 CLIENT_DESCRIPTION = """Yandex R&D Debug Log parser for Intel FFM DRAM Hard Error handlers"""
 HELPS = {
@@ -296,9 +257,8 @@ def process_chassis_info(dbg_log_block, dbg_block_name, socket_id):
     if environment['inventory'] and environment['baseboard_model']:
         logger.debug(environment)
         logger.info("...success")
-        #TODO Check for current test
-        if rmt_instance:
-            rmt_instance.result.environment = environment
+        if test_instance:
+            test_instance.result.environment = environment
         return True
 
 def process_socket_info(dbg_log_block, dbg_block_name, socket_id):
@@ -452,9 +412,8 @@ def ram_conf_validator():
     else:
         sys.exit(ec)
 
-    #TODO Check for current test
-    if rmt_instance:
-        rmt_instance.result.component = components
+    if test_instance:
+        test_instance.result.component = components
 
     return ram_config_status
 
@@ -470,21 +429,6 @@ def process_mbist(dbg_log_block, dbg_block_name, socket_id):
             print('Founded DQ error in ' + failed_device)
             ident_dimm(failed_device,'warning')
         
-def process_step(dbg_log_block, dbg_block_name, socket_id):
-    logger.info('Processing STEP...')
-    for line in dbg_log_block:
-        #print(line)
-        #[FailedPatternBitMask 0x2] N1.C5.D0. FAIL: R1.CID0.BG2.BA3.ROW:0x0001a.COL:0x3f8.DQ24.
-        STEP_FAILED_PATTER_RE = r'[FailedPatternBitMask (0x[0-9]+)] N([0-4]).C([0-6]).D([0-3]). FAIL: R[0-1].CID([0-9]).BG([0-9]).BA([0-9]).ROW:(0x[0-9a-f]*).COL:(0x[0-9a-f].DQ([0-7][0-9]).'
-        failed_rank_match = re.match(STEP_FAILED_PATTER_RE, line)
-        if failed_rank_match:
-            print(failed_rank_match)
-#            #failed_device = ''.join(e for e in failed_rank_match.group(1) if e.isalnum())
-#            #failed_device = ''.join(filter(str.isalnum, failed_rank_match.group(1)))
-#            failed_device = '.'.join(failed_rank_match.group(1,2,3))
-#            print('Founded DQ error in ' + failed_device)
-#            ident_dimm(failed_device,'warning')
-
 def process_training_info(dbg_log_block, dbg_block_name, socket_id):
     for line in dbg_log_block:
         failed_rank_match = re.match(r'.*(N[0-9].C[0-6].D[0-3].R[0-9]).S[01][0-9]: Failed RdDqDqs', line)
@@ -504,7 +448,7 @@ def process_smm_ce_handler(dbg_log_block, dbg_block_name, socket_id):
             ident_dimm(failed_device,'critical')
 
 def parse_debug_log(args):
-    global rmt_instance
+    global test_instance
     global conf
     # TODO: rewrite to class?
     """
@@ -518,7 +462,8 @@ def parse_debug_log(args):
 #    global rmt_dblock_counter
 #    rmt_dblock_counter = defaultdict(int)
 #    rmt_data_required = defaultdict(int)
-    rmt_instance = {}
+    test_instance = {}
+    step_instance = {}
 
     processed_funcs = []
     func_counter = defaultdict(int)
@@ -529,7 +474,9 @@ def parse_debug_log(args):
     current_processing_block_ended = False
 
     if conf['goal']['name'] == 'RMT':
-        rmt_instance = RMT(conf, ram_info, BasicTestResult(conf, conf['goal']['name'], components))
+        test_instance = RMT(args, conf, ram_info, BasicTestResult(conf, conf['goal']['name'], components))
+    if conf['goal']['name'] == 'STEP':
+        test_instance = STEP(args, conf, ram_info, BasicTestResult(conf, conf['goal']['name'], components))
 
     if dbg_log_src_isconsole(args.source):
         print('Waiting for data from serial console' + args.source + '...')
@@ -542,27 +489,25 @@ def parse_debug_log(args):
             'DIMMINFO_TABLE' : process_dimm_info,
             'SOCKET_0_TABLE' : process_socket_info,
             'SOCKET_1_TABLE' : process_socket_info,
-            '@SEC Run CPGC Test' : process_step,
-#            'BSSA_RMT' : rmt_instance.process_rmt_results,
-#            'RMT_N0' : rmt_instance.process_rmt_results,
-#            'RMT_N1' : rmt_instance.process_rmt_results,
             'Rx Dq/Dqs Basic' : process_training_info,
             'MemTest' : process_mbist,
             'Corrected Memory Error' : process_smm_ce_handler
     }
-    if rmt_instance:
-        dbg_block_processing_rules.update(rmt_instance.processing_rules())
+    if test_instance:
+        dbg_block_processing_rules.update(test_instance.processing_rules())
 
     # Goal testplan and processors dependencies rules
     # Base part:
     testplan = {
         ram_conf_validator : [ process_socket_info, process_dimm_info ],
-#        process_chassis_info : [ console_data_dummy ],
+        process_chassis_info : [ console_data_dummy ],
         process_socket_info : [ console_data_dummy ],
         process_dimm_info : [ console_data_dummy ]
     }
-    if rmt_instance:
-        testplan.update(rmt_instance.testplan())
+    if test_instance:
+        testplan.update(test_instance.testplan())
+
+    dbg_block_processing_rules.update(test_instance.processing_rules())
     #testplan_set = dict((globals()[k], set(testplan[globals()[k]])) for k in testplan)
     #testplan_set = dict((eval(k), set(testplan[eval(k)])) for k in testplan)
 
@@ -625,8 +570,8 @@ def parse_debug_log(args):
             dbg_block_end_re = MRC_BBLOCK_END_RE
 
         if MRC_iMC_BLOCK_START_RE.match(line):
-            logger.debug("Founded MRC block: " + line)
             dbg_block_name = MRC_iMC_BLOCK_START_RE.match(line).group(1)
+            logger.debug("Founded MRC block: " + dbg_block_name)
             dbg_block_end_re = MRC_iMC_BLOCK_END_RE
 
         if MRC_SMM_BLOCK_START_RE.match(line):
@@ -672,8 +617,9 @@ def parse_debug_log(args):
 #                           print("BEFORE: " + str(block_processing_queue[-1].keys()))
                             block_processing_queue.pop()
                             mrc_fatal_error_catched = False
-                        except:
-                            logger.info("Failed to process " + str(current_processing_block_name) + " with func.: " + str(func))
+                        except Exception, e:
+                            #logger.info("Failed to process " + str(current_processing_block_name) + " with func.: " + str(func) + ":" )
+                            logger.info("Failed to process {} with func {}, raised: {}".format(current_processing_block_name, func, e))
                             pass
                         # Check for possibility to run supplimentary functions and execute them if possible
                         if testplan.keys():
