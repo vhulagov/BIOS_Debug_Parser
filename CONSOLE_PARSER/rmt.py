@@ -23,13 +23,14 @@ class RMT:
     """
     Gather Intel Rank Margin Tool, parse and return the output
     """
-    def __init__(self, conf, ram_info, test_result):
+    def __init__(self, args, conf, ram_info, test_result):
         self.margin_params = ['RxDqs-', 'RxDqs+', 'RxV-', 'RxV+', 'TxDq-', 'TxDq+', 'TxV-', 'TxV+', 'Cmd-', 'Cmd+', 'CmdV-', 'CmdV+', 'Ctl-', 'Ctl+']
 
         self.dimm_params = ['DIMM vendor', 'DRAM vendor', 'RCD vendor', 'Organisation', 'Form factor', 'Freq', 'Prod. week', 'PN', 'hex']
 
-        self.ram_info = ram_info
+        self.args = args
         self.conf = conf
+        self.ram_info = ram_info
         self.result = test_result
         self.result.name = 'RMT'
 
@@ -206,6 +207,10 @@ class RMT:
         return True
 
     def send_results(self):
-        return self.result.send_via_api(self.conf['report']['api_url'])
+        if self.args.disable_sending:
+            print(json.dumps(self.result.get_result_dict(), indent=2))
+            return True
+        else:
+            return self.result.send_via_api(self.conf['report']['api_url'])
 
 # vim: tabstop=8 softtabstop=0 expandtab shiftwidth=4 smarttab
