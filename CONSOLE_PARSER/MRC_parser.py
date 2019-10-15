@@ -4,6 +4,9 @@ from __future__ import print_function
 
 import os
 import sys
+import signal
+import fcntl
+
 import argparse
 import logging
 
@@ -22,6 +25,8 @@ import serial
 import tty
 import termios
 
+from pyghmi.ipmi import console as ipmi_console
+
 from rmt import RMT
 from step import STEP
 
@@ -32,7 +37,7 @@ from benchmark.conf import Conf, parse_list, parse_bool
 sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s',
     stream=sys.stdout
 )
@@ -47,7 +52,7 @@ ERROR_CODES = {
 }
 
 rmt_instance = None
-components = []
+components = {}
 environment = {}
 
 CONF_FILE = 'MRC_parser.ini'
@@ -104,6 +109,9 @@ Please, create component with alias {model} in benchmark manually."""
 
 
 OPTIONS = { 
+    'base' : {
+        'timeout' : (int, 600)
+    },
     'report': {
         # notification options
         'api_url': (str, 'https://benchmark-test.haas.yandex-team.ru/api'),
@@ -156,15 +164,69 @@ def argument_parsing():
                         action='store_true', default=False)
     return parser.parse_args()
 
-def dbg_log_src_isconsole(dbg_log_data_source):
-    if stat.S_ISCHR(os.stat(dbg_log_data_source).st_mode):
-        return True;
+def dbg_log_src_is_console(dbg_log_data_source):
+    try:
+        if stat.S_ISCHR(os.stat(dbg_log_data_source).st_mode):
+            logger.debug("Source of debug data is direct attached serial console")
+            return True
+    except Exception:
+        return False
 
-def dbg_log_src_islogfile(dbg_log_data_source):
+def dbg_log_src_is_sol(dbg_log_data_source):
+    logger.debug("Trying get date from IPMI host...")
+    try:
+        if os.system("ping6 -c 1 " + dbg_log_data_source + ">/dev/null") is 0:
+            # TODO: Add check for sol info
+            logger.debug("Source of debug data is IPMI SOL")
+            return True
+        else:
+            return False
+    except Exception:
+        return False
+
+def dbg_log_src_is_logfile(dbg_log_data_source):
     if os.path.isfile(dbg_log_data_source) and os.path.getsize(dbg_log_data_source) > 0:
-        return True;
+        logger.debug("Source of debug data is plain text file")
+        return True
 
-def serial_data(port, baudrate):
+class SOL():
+    def __init__(self, bmc):
+        self.bmc = bmc
+        self.sol_data = list()
+        print("BMC host is " + str(self.bmc))
+        self.sol_session = ipmi_console.Console(bmc=self.bmc, userid='ADMIN', password='ADMIN',
+                               iohandler=self.putdata, force=True)
+        print(dir(self.sol_session))
+  
+    def putdata(self, data):
+        print("Put the following data to SOL buffer: " + str(data))
+        self.sol_data.append(data)
+ 
+    def getdata(self):
+        line = ''
+        while True:
+            if self.waitdata():
+                print('There is must be some data here...')
+                print(self.sol_data)
+                if self.sol_data:
+                    print('pop some existence data from SOL buffer')
+                    line = self.sol_data.pop()
+                else:
+                    print('SOL data buffer is empty: return empty string')
+                    break
+            else:
+                print('No payload from SOL')
+                break
+            yield line
+ 
+    def waitdata(self):
+        return not self.sol_session.wait_for_rsp(timeout=600)
+
+    def close(self):
+        return self.sol_session.close()
+
+
+def das_data(port, baudrate):
     debug_console = serial.Serial(
         port=port,\
         baudrate=baudrate,\
@@ -363,7 +425,7 @@ def ram_conf_validator():
                             prod_week_norm = re.sub(r'ww([0-9][0-8]) 20([0-3][0-9])', r"\2\1", rdimm['Prod. week'])
                             model = '{}_{}'.format(rdimm['PN'], rdimm['RCD vendor'].upper())
                             slot = dimm_labels[str('{}.{}.{}'.format(s.split()[-1],c.split()[-1],d.split()[-1]))]
-                            components.append({
+                            components[slot] = {
                                 'type': 'RAM',
                                 'pn': rdimm['PN'],
                                 'model': model,
@@ -377,7 +439,7 @@ def ram_conf_validator():
                                 'speed': rdimm['Freq'],
                                 'timings': rdimm['Timings'],
                                 'slot': slot
-                            })
+                            }
 
     #logger.debug(json.dumps(components_counter, indent=2))
 
@@ -408,7 +470,8 @@ def ram_conf_validator():
             ec = ERROR_CODES['ddr_frequency']
 
     if all(ram_config_status[s] for s in ram_config_status.keys()):
-        logger.info('Founded ' + components[0]['vendor'] + ' ' + components[0]['model'])
+        #logger.info('Founded ' + components.values['vendor'] + ' ' + components.values['model'])
+        pass
     else:
         sys.exit(ec)
 
@@ -418,16 +481,28 @@ def ram_conf_validator():
     return ram_config_status
 
 def process_mbist(dbg_log_block, dbg_block_name, socket_id):
+    global conf
     logger.info('Processing MemTest...')
-    for line in dbg_log_block:
-        #print(line)
-        failed_rank_match = re.match(r'.*(N[0-9].C[0-6].D[0-3].R[0-9]): MemTest Failure!', line)
+    dimm_labels = yaml.load(open(conf['node_configuration']['dimm_labels']), Loader=yaml.BaseLoader)
+    def parse_enhanced_warning(type):
+        if type == 5:
+            logger.error('Warning type: ' + str(type) + '. Founded memory issue'
+        failed_rank_match = re.match(r'N([0-9]).C([0-6]).D([0-3]).R[0-9]: MemTest Failure!', line)
         if failed_rank_match:
             #failed_device = ''.join(e for e in failed_rank_match.group(1) if e.isalnum())
             #failed_device = ''.join(filter(str.isalnum, failed_rank_match.group(1)))
-            failed_device = '.'.join(failed_rank_match.group(1,2,3))
-            print('Founded DQ error in ' + failed_device)
-            ident_dimm(failed_device,'warning')
+            failed_device = dimm_labels[str('.'.join(failed_rank_match.group(1,2,3)))]
+            logger.error('Founded DQ error in ' + failed_device)
+    sys.exit(0)
+            #ident_dimm(failed_device,'warning')
+    for line in dbg_log_block:
+        print(line)
+        enchanced_warning = re.match(r'Enhanced warning of type \([0-9]+\) logged:', line)
+        if enchanced_warning:
+            warn_type = int(enchanced_waring.group(1))
+
+
+
         
 def process_training_info(dbg_log_block, dbg_block_name, socket_id):
     for line in dbg_log_block:
@@ -450,6 +525,8 @@ def process_smm_ce_handler(dbg_log_block, dbg_block_name, socket_id):
 def parse_debug_log(args):
     global test_instance
     global conf
+    global data_source
+    global dbg_log_data
     # TODO: rewrite to class?
     """
     Parse Serial Debug Log for RDIMM/DRAM errors and call specific handlers 
@@ -478,11 +555,43 @@ def parse_debug_log(args):
     if conf['goal']['name'] == 'STEP':
         test_instance = STEP(args, conf, ram_info, BasicTestResult(conf, conf['goal']['name'], components))
 
-    if dbg_log_src_isconsole(args.source):
-        print('Waiting for data from serial console' + args.source + '...')
-        dbg_log_data = serial_data(args.source, 115200)
-    if dbg_log_src_islogfile(args.source):
+    if dbg_log_src_is_logfile(args.source):
         dbg_log_data = open(args.source)
+    if dbg_log_src_is_console(args.source):
+        data_source = 'das'
+        logger.debug('Waiting for data from direct attached serial console' + args.source + '...')
+        # TODO: Make do not fumble the console
+        dbg_log_data = das_data(args.source, 115200)
+    if dbg_log_src_is_sol(args.source):
+        data_source = 'sol'
+#        global sol_output
+#        sol_output = list()
+        try:
+            logger.info('Trying initialize IPMI SOL session with ' + args.source + '...')
+            sol_session = SOL(args.source)
+            logger.info("SOL initiated!")
+            try:
+                def sigterm_handler(sig, frame):
+                    print('You pressed Ctrl+C!')
+                    sol_session.close()
+                    sys.exit(0)
+
+
+                if signal.signal(signal.SIGINT, sigterm_handler):
+                    logger.info("Signal SIGINT registered to carefully close SOL session")
+
+#                import atexit
+#                atexit.register(exit_handler)
+
+                logger.info('Waiting for data from SOL console ' + args.source + '...')
+                dbg_log_data = sol_session.getdata()
+            except Exception as e:
+                print(e)
+                logger.error("Something goes wrong...")
+                sol_session.close()
+        except Exception as e:
+            print(e)
+            logger.error("Can't get SOL data from " + args.source + " source.")
 
     dbg_block_processing_rules = { 
             'InitFruStrings' : process_chassis_info,
@@ -500,7 +609,7 @@ def parse_debug_log(args):
     # Base part:
     testplan = {
         ram_conf_validator : [ process_socket_info, process_dimm_info ],
-        process_chassis_info : [ console_data_dummy ],
+        #process_chassis_info : [ console_data_dummy ],
         process_socket_info : [ console_data_dummy ],
         process_dimm_info : [ console_data_dummy ]
     }
@@ -544,20 +653,45 @@ def parse_debug_log(args):
                     processed_funcs.append(supplementary_func)
         return testplan_set, processed_funcs
 
-    logger.info('Parsing data from file ' + args.source + '...')
+    def wait_data(timeout):
+        global data_source
+        if data_source in ('sol', 'das'):
+            #logger.info('.', end='')
+            print('.')
+            time.sleep(1)
+        
 
+    logger.info('Parsing data from source ' + args.source + '...')
+
+#    while True:
     for line in dbg_log_data:
-        ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
-        ansi_escape.sub('', line)
+#        if not dbg_log_data:
+#            if wait_data(conf['base']['timeout']):
+#                continue
+#            else:
+#                break
+        #print('TYPE: ' + str(type(dbg_log_data)))
+        #print('DATA: ' + str(dbg_log_data))
 
-        line = line.rstrip('\r\n')
-        if dbg_log_src_isconsole(args.source):
-            if len(line) == 0:
-                logger.info('.', end='')
-                time.sleep(0.3)
-                continue
-
-            print('*', end='')
+#        try:
+#            if sol_session.wait_for_rsp(timeout=600):
+#                print('There is must be some data here...')
+#                line = sol_output.getvalue()
+#                if not line:
+#                    print('PASS')
+#                    continue
+#                else:
+#                    print("GET called VALUE: " + str(line) + str(len(line)))
+#    #            line = dbg_log_data.pop()
+#    #            print("POPPED valie: " + line)
+#        except Exception:
+#            print('EXCEPTION!')
+#            print(dbg_log_data)
+#            time.sleep(3)
+#            continue
+#        print(line)
+        ansi_escape = re.compile(r'\x1B[@-_][0-?]*[ -/]*[@-~]')
+        line = ansi_escape.sub('', line).rstrip('\r\n')
 
         dbg_block_name = ''
 
@@ -650,10 +784,15 @@ def main():
     global ram_info
     global components
     global environment
+
+    global data_source
+    global dbg_log_data
+
     global LED_EXISTENCE
 
     args = argument_parsing()
     conf = Conf(OPTIONS, args.config, log=False)
+    dbg_log_data = list()
 
     try:
         init_leds
@@ -664,4 +803,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 # vim: tabstop=8 softtabstop=0 expandtab shiftwidth=4 smarttab
