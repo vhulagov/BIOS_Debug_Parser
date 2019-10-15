@@ -38,8 +38,8 @@ class STEP:
 
     def testplan(self):
         testplan = {
-#            self.send_results : [ self.qualification ],
-#            self.qualification : [ self.result_completeness ]
+            self.send_results : [ self.qualification ],
+            self.qualification : [ self.result_completeness ]
         }
         return testplan
 
@@ -60,10 +60,8 @@ class STEP:
             'test_mode' : None
         }   
         STEP_TEST_MODE_RE = re.compile(r'^Test Mode : (.*).')
-        #STEP_FAILED_PATTERN_RE = re.compile(r'\[FailedPatternBitMask (0x[0-9]+)\] N([0-4])\.C([0-6])\.D([0-3])\. FAIL: R([0-1])\.CID([0-9])\.BG([0-9])\.BA([0-9])\.ROW:(0x[0-9a-f]+)\.COL:(0x[0-9a-f]+)\.DQ([0-7][0-9])\.')
         STEP_FAILED_PATTERN_RE = re.compile(r'\[FailedPatternBitMask (0x[0-9A-F]+)\] N([0-4])\.C([0-6])\.D([0-3])\. FAIL: R([0-1])\.CID([0-9])\.BG([0-9])\.BA([0-9])\.ROW:(0x[0-9a-f]+)\.COL:(0x[0-9a-f]+)\.DQ([0-7][0-9])\.(PPR)?:?([a-zA-Z]+)?\(?([A-Z]+)?\)?')
 	STEP_DIMM_RESULT_RE = re.compile(r'^N([0-1])\.C([0-5])\.D([01]):  \[S/N: ([12][0-9][0-4][0-9])_([A-Z0-9]+)\] (Pass|Fail|Empty)\(?([A-Za-z ]+)?\)?')
-        #print(json.dumps(self.ram_info, indent=2))
         for line in dbg_log_block:
             #[FailedPatternBitMask 0x2] N1.C5.D0. FAIL: R1.CID0.BG2.BA3.ROW:0x0001a.COL:0x3f8.DQ24.
             #[FailedPatternBitMask 0x2] N0.C0.D1. FAIL: R1.CID0.BG2.BA3.ROW:0x07f63.COL:0x118.DQ58.PPR:Done(PASS)
@@ -105,7 +103,7 @@ class STEP:
             return False
         else:
             try:
-                #print(json.dumps(self.result.component, indent=2))
+                print(json.dumps(self.result.component, indent=2))
                 return True
             except:
                 return False
