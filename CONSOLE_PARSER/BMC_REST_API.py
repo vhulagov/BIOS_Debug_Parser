@@ -1,3 +1,7 @@
+# -*- coding: utf-8 -*-
+
+from __future__ import print_function
+
 import os
 import time
 import json
@@ -6,6 +10,7 @@ from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 import argparse
+from smbios import SMBios
 #
 #
 #import contextlib
@@ -88,13 +93,29 @@ class BMCHttpApi(object):
         print("Exception: " + str(Exception))
         self.destroy_session()
 
+    def get_SMBIOS_information(self):
+        import io
+        try:
+            self.create_session()
+            r = self.session.get(url=self.api_url + 'api/system_inventory_gbt/smbios-file',
+                                headers=self.header, stream=True, verify=False)
+            if not r.ok:
+                raise MicrocodeUpdateError(r.content)
+            print(dir(r.content))
+            smbios = SMBios(r.content)
+            smbios.decode_type0()
+        except Exception as e:
+            print(str(e))
+            self.destroy_session()
+
     def get_STEP_possibility(self):
+        # TODO: implement with @contextmanager
         try:
             self.create_session()
             r = self.session.get(url=self.api_url + 'api/system_inventory_gbt/dimm_info',
                                 headers=self.header, verify=False)
             dimm_info_json = json.loads(r.content)
-            print(json.dumps(dimm_info_json, indent=2))
+            #print(json.dumps(dimm_info_json, indent=2))
             print("Founded DRAM: " + str(dimm_info_json[0]['strPartNum']))
             if dimm_info_json[0]['strManufacturer'] == 'Samsung':
                 return True
@@ -104,7 +125,6 @@ class BMCHttpApi(object):
             print(self.host + " Fail: " + str(e))
             # Don't forget to log our of self.session
             self.destroy_session()
-
 
     def update_microcode(self):
         print("Creating new session...")
@@ -175,9 +195,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     bmc_api = BMCHttpApi(args.host, 'ADMIN', 'ADMIN', '/home/lacitis/WORK/ROMS/GB/MY81-EX0-Y3N/BIOS/R05/STEP/2.10/R05_STEP_2_10_NoPPR.RBU')
+    bmc_api.get_SMBIOS_information()
     # Check from BMC API that installed memory is Samsung 
-    if bmc_api.get_STEP_possibility():
-        print("GOOD NEWS! STEP IS POSSIBLE!")
+#    if bmc_api.get_STEP_possibility():
+#        print("GOOD NEWS! STEP IS POSSIBLE!")
         # Update BIOS to DEBUG version
         #bmc_api.update_microcode()
         # Activate SOL parser
