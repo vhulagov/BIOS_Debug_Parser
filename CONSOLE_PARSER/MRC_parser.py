@@ -25,10 +25,10 @@ import serial
 import tty
 import termios
 
-from pyghmi.ipmi import console as ipmi_console
-
 from rmt import RMT
 from step import STEP
+from sol import SOL
+from msel import MemorySubsytemEventsLogger
 
 from benchmark.test_result import BasicTestResult
 from benchmark.common import yank_api
@@ -147,8 +147,6 @@ dimm_params = ['DIMM vendor', 'DRAM vendor', 'RCD vendor', 'Organisation', 'Form
 def tree():
     return defaultdict(tree)
 
-ram_info = tree()
-
 def argument_parsing():
     """
     Parse and return command line arguments
@@ -188,43 +186,6 @@ def dbg_log_src_is_logfile(dbg_log_data_source):
     if os.path.isfile(dbg_log_data_source) and os.path.getsize(dbg_log_data_source) > 0:
         logger.debug("Source of debug data is plain text file")
         return True
-
-class SOL():
-    def __init__(self, bmc):
-        self.bmc = bmc
-        self.sol_data = list()
-        print("BMC host is " + str(self.bmc))
-        self.sol_session = ipmi_console.Console(bmc=self.bmc, userid='ADMIN', password='ADMIN',
-                               iohandler=self.putdata, force=True)
-        print(dir(self.sol_session))
-  
-    def putdata(self, data):
-        print("Put the following data to SOL buffer: " + str(data))
-        self.sol_data.append(data)
- 
-    def getdata(self):
-        line = ''
-        while True:
-            if self.waitdata():
-                print('There is must be some data here...')
-                print(self.sol_data)
-                if self.sol_data:
-                    print('pop some existence data from SOL buffer')
-                    line = self.sol_data.pop()
-                else:
-                    print('SOL data buffer is empty: return empty string')
-                    break
-            else:
-                print('No payload from SOL')
-                break
-            yield line
- 
-    def waitdata(self):
-        return not self.sol_session.wait_for_rsp(timeout=600)
-
-    def close(self):
-        return self.sol_session.close()
-
 
 def das_data(port, baudrate):
     debug_console = serial.Serial(
@@ -480,30 +441,102 @@ def ram_conf_validator():
 
     return ram_config_status
 
+def parse_memtest_failed(data_buffer):
+    LOCATION_KEYS = {
+        'socket': '(?P<socket>[01])',
+        'channel': '(?P<channel>\d|FF)',
+        'dimm': '(?P<dimm>\d|FF)',
+    }
+
+    ERR_MSG = (r'N{socket}\.C{channel}\.D{dimm}(\.R\d)?(\.S\d\d)?:\s*'
+               '(ERROR:|FAULTY_PARTS_TRACKING:)?\s+(?P<message>[^:!]+?)\s*!*$')
+    ERR_MSG_RE = re.compile(ERR_MSG.format(**LOCATION_KEYS))
+    for line in data_buffer:
+        #rank, line.split(':')
+        #match = ERR_MSG_RE.search(line)
+        failed_rank_match = re.match(r'^N([0-9]).C([0-6]).D([0-3]).R[0-9]: MemTest Failure!', line)
+        #if match:
+        if failed_rank_match:
+            fields = match.groupdict()
+            location = LOC_TMPL.format(**fields)
+            msg = fields['message'].strip()
+            self.err_message[location] = (msg, self.stage)
+
+#    def process_checkpoint(self, line):
+#        checkpoint_match = CHECKPOINT_RE.search(line)
+#        if checkpoint_match:
+#            self.checkpoint = Checkpoint(**checkpoint_match.groupdict())
+#        if self.checkpoint in self.parsed_checkpoints:
+#            handler = self.parsed_checkpoints[self.checkpoint]
+#            handler(line)
+
+
+def parse_enhanced_warning(data_buffer, timestamp):
+    warn_dict = {}
+    def fill_warn_dict(line):
+        key, value = re.split('= |: |\s(?=\S*$)', line, maxsplit=1)
+        warn_dict[key.lower().strip(' ,').replace(' ','_').lower()] = value
+
+    #enhanced_warning = re.match(r'Enhanced warning of type \([0-9]\) logged:.*', data_buffer)
+    enhanced_warning = re.match(r'Enhanced warning of type ([0-9]) logged:', data_buffer)
+    if enhanced_warning:
+        logger.warning('Founded Enhanced warning block!')
+        warn_type = int(enhanced_warning.group(1))
+        data_buffer_splitted = data_buffer.splitlines()
+        data_buffer_splitted.remove(enhanced_warning.group(0))
+        logger.debug("Parsing the common part...")
+        for line in data_buffer_splitted:
+            #logger.debug("Line(" + str(data_buffer_splitted.index(line)) + "): " + line) 
+            if 'Warning Code' in line:
+                # Flush processed lines
+                data_buffer_splitted[data_buffer_splitted.index(line)] = ''
+                for l in line.split(', '):
+                    fill_warn_dict(l.strip(' ,'))
+                continue
+            #key, value = re.split('= |: |\s(?=\S*$)', data_buffer_splitted, maxsplit=1)
+            fill_warn_dict(line)
+            data_buffer_splitted[data_buffer_splitted.index(line)] = ''
+            if 'Socket' in line:
+                break
+        logger.debug("Parsing specific part...")
+        for line in data_buffer_splitted:
+            if not line.strip():
+                continue
+            if warn_type == 5:
+                #logger.info('Warning type: ' + str(warn_type) + ' (RAM issue)')
+                if 'Dq bytes' in line:
+                    print(line.split('x'))
+                    # TODO: determine DQ line from node/channel/dimm/!device!/bit inputs
+                    # Need to parse START_DATA_TX_DQ_PER_BIT to analyze type of failure
+                    # or get from STEP output see: ITDC-202731, ITDC-202681
+                    continue
+                fill_warn_dict(line)
+        print(json.dumps(warn_dict, indent=2))
+
+
 def process_mbist(dbg_log_block, dbg_block_name, socket_id):
     global conf
     logger.info('Processing MemTest...')
     dimm_labels = yaml.load(open(conf['node_configuration']['dimm_labels']), Loader=yaml.BaseLoader)
-    def parse_enhanced_warning(type):
-        if type == 5:
-            logger.error('Warning type: ' + str(type) + '. Founded memory issue'
-        failed_rank_match = re.match(r'N([0-9]).C([0-6]).D([0-3]).R[0-9]: MemTest Failure!', line)
-        if failed_rank_match:
-            #failed_device = ''.join(e for e in failed_rank_match.group(1) if e.isalnum())
-            #failed_device = ''.join(filter(str.isalnum, failed_rank_match.group(1)))
-            failed_device = dimm_labels[str('.'.join(failed_rank_match.group(1,2,3)))]
-            logger.error('Founded DQ error in ' + failed_device)
+    dbg_log_block_text = "\n".join(dbg_log_block)
+    mbist_block = re.compile("(?<!^)\s+(?=.*: MemTest Failure!)(?!.\s)").split(dbg_log_block_text)
+    enchanced_warning = re.compile("(?<!^)\s+(?=Enhanced warning of type [0-9] logged:.*)(?!.\s)").split(dbg_log_block_text)
+    timestamp = time.time()
+    if mbist_block:
+        for memfail in mbist_block:
+            mbist_part, warn_part = memfail.split('\n\n')
+#            print("MBIST_PART:")
+#            print(mbist_part)
+#            print("WARN_PART:")
+#            print(warn_part)
+            #parse_memtest_failed(warn_part)
+            parse_enhanced_warning(warn_part, timestamp)
+    elif enchanced_warning:
+        parse_enhanced_warning(warn_part)
+    else:
+        logger.info("Memory test passed without any issues")
     sys.exit(0)
-            #ident_dimm(failed_device,'warning')
-    for line in dbg_log_block:
-        print(line)
-        enchanced_warning = re.match(r'Enhanced warning of type \([0-9]+\) logged:', line)
-        if enchanced_warning:
-            warn_type = int(enchanced_waring.group(1))
 
-
-
-        
 def process_training_info(dbg_log_block, dbg_block_name, socket_id):
     for line in dbg_log_block:
         failed_rank_match = re.match(r'.*(N[0-9].C[0-6].D[0-3].R[0-9]).S[01][0-9]: Failed RdDqDqs', line)
@@ -548,7 +581,9 @@ def parse_debug_log(args):
     block_processing_queue = []
     mrc_block_name = ''
     mrc_fatal_error_catched = False
+    current_processing_block_name = ''
     current_processing_block_ended = False
+    first_run_flag = True
 
     if conf['goal']['name'] == 'RMT':
         test_instance = RMT(args, conf, ram_info, BasicTestResult(conf, conf['goal']['name'], components))
@@ -563,6 +598,7 @@ def parse_debug_log(args):
         # TODO: Make do not fumble the console
         dbg_log_data = das_data(args.source, 115200)
     if dbg_log_src_is_sol(args.source):
+        # TODO: Rewrite with context manager concept im mind
         data_source = 'sol'
 #        global sol_output
 #        sol_output = list()
@@ -572,19 +608,13 @@ def parse_debug_log(args):
             logger.info("SOL initiated!")
             try:
                 def sigterm_handler(sig, frame):
-                    print('You pressed Ctrl+C!')
+                    print('Ctrl+C is pressed! Session is terminating...')
                     sol_session.close()
                     sys.exit(0)
-
-
                 if signal.signal(signal.SIGINT, sigterm_handler):
                     logger.info("Signal SIGINT registered to carefully close SOL session")
-
-#                import atexit
-#                atexit.register(exit_handler)
-
                 logger.info('Waiting for data from SOL console ' + args.source + '...')
-                dbg_log_data = sol_session.getdata()
+                dbg_log_data = sol_session.get_data()
             except Exception as e:
                 print(e)
                 logger.error("Something goes wrong...")
@@ -694,13 +724,26 @@ def parse_debug_log(args):
         line = ansi_escape.sub('', line).rstrip('\r\n')
 
         dbg_block_name = ''
+        if SERVER_POWER_ON_RE.match(line):
+            if first_run_flag:
+                first_run_flag = False
+                logger.info("Server just powered on. Initialized new job session.")
+            else:
+                logger.info("Server just restarted. #TODO: Check reason:")
+                # TODO 1. Check reason of restart
+
+        if SERVER_POWER_OFF_RE.match(line):
+            logger.info("Server just powered off. Job session finished.")
+            # TODO flush buffers and may be send the job result
 
         if MRC_ACPI_START_RE.match(line):
             dbg_block_name = MRC_ACPI_START_RE.match(line).group(1)
+            logger.debug("Founded ACPI BIOS block: " + dbg_block_name)
             dbg_block_end_re = MRC_ACPI_END_RE
 
         if MRC_BBLOCK_START_RE.match(line):
             dbg_block_name = MRC_BBLOCK_START_RE.match(line).group(1)
+            logger.debug("Founded AMI BIOS base block: " + dbg_block_name)
             dbg_block_end_re = MRC_BBLOCK_END_RE
 
         if MRC_iMC_BLOCK_START_RE.match(line):
@@ -710,6 +753,7 @@ def parse_debug_log(args):
 
         if MRC_SMM_BLOCK_START_RE.match(line):
             dbg_block_name = MRC_SMM_BLOCK_START_RE.match(line).group(1)
+            logger.debug("Founded AMI BIOS SMM block: " + dbg_block_name)
             dbg_block_end_re = MRC_SMM_BLOCK_END_RE
 
         if dbg_block_name:
@@ -782,6 +826,7 @@ def main():
     global conf
     global args
     global ram_info
+    global ram_failures_info
     global components
     global environment
 
@@ -793,6 +838,9 @@ def main():
     args = argument_parsing()
     conf = Conf(OPTIONS, args.config, log=False)
     dbg_log_data = list()
+    ram_info = tree()
+    ram_failures_info = MemorySubsytemEventsLogger(ram_info, environment)
+
 
     try:
         init_leds
