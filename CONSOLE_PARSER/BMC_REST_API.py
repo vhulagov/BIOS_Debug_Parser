@@ -3,6 +3,7 @@
 from __future__ import print_function
 
 import os
+import sys
 import time
 import json
 import requests
@@ -11,8 +12,12 @@ requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 import argparse
 from smbios import SMBios
-#
-#
+
+step_release_date = '06/20/2019'
+step_rbu_file_path = '/home/lacitis/WORK/ROMS/GB/MY81-EX0-Y3N/BIOS/R05/STEP/2.10/R05_STEP_2_10_NoPPR.RBU'
+#step_w_ppr_rbu_file_path = '/home/lacitis/WORK/ROMS/GB/MY81-EX0-Y3N/BIOS/R05/STEP/2.10/R05_STEP_2_10_PPR.RBU'
+step_w_ppr_rbu_file_path = '/home/lacitis/WORK/ROMS/GB/MY81-EX0-Y3N/BIOS/R05/STEP/2.09/MY81-EX0-Y3N_R05_STEP_HPPR_NoRMT.RBU'
+
 #import contextlib
 #try:
 #    from http.client import HTTPConnection # py3
@@ -47,6 +52,7 @@ class BMCHttpApi(object):
         self.user = user
         self.password = password
         self.test_bios_rbu = test_bios_rbu
+        self.logged = False
         if not logger:
             import logging
             logging.basicConfig(level=logging.INFO)
@@ -54,6 +60,10 @@ class BMCHttpApi(object):
         self.header = {}
         #self.header.update({'Content-Type': 'application/json'})
         self.api_url = 'https://[' + self.host + ']/'
+
+    class MicrocodeUpdateError(Exception):
+        """Raise if any step of preparing to microcode update fails"""
+        print("Exception: " + str(Exception))
 
     def create_session(self):
         # Get QSESSIONID and X-CSRFTOKEN to log into AMI API
@@ -94,63 +104,59 @@ class BMCHttpApi(object):
         self.destroy_session()
 
     def get_SMBIOS_information(self):
-        import io
         try:
             self.create_session()
             r = self.session.get(url=self.api_url + 'api/system_inventory_gbt/smbios-file',
-                                headers=self.header, stream=True, verify=False)
+                                headers=self.header, verify=False)
             if not r.ok:
-                raise MicrocodeUpdateError(r.content)
-            print(dir(r.content))
-            smbios = SMBios(r.content)
-            smbios.decode_type0()
+                raise self.MicrocodeUpdateError(r.content)
+            smbios_bin = r.content.decode('base64')
+            #open('/tmp/smbios.decoded', 'wb').write(smbios_bin)
+            smbios_class = SMBios(smbios_bin)
+            self.smbios = smbios_class.decode_all()
+            if self.smbios:
+                return True
         except Exception as e:
             print(str(e))
             self.destroy_session()
 
     def get_STEP_possibility(self):
-        # TODO: implement with @contextmanager
-        try:
-            self.create_session()
-            r = self.session.get(url=self.api_url + 'api/system_inventory_gbt/dimm_info',
-                                headers=self.header, verify=False)
-            dimm_info_json = json.loads(r.content)
-            #print(json.dumps(dimm_info_json, indent=2))
-            print("Founded DRAM: " + str(dimm_info_json[0]['strPartNum']))
-            if dimm_info_json[0]['strManufacturer'] == 'Samsung':
+        if bmc_api.get_SMBIOS_information():
+            cur_bios_release_date = bmc_api.smbios['type0']['bios_release_date']
+            system_model = bmc_api.smbios['type1']['system_model']
+            memory_manufacturer = bmc_api.smbios['type17'][0]['manufacturer']
+            memory_pn = bmc_api.smbios['type17'][0]['part_number']
+            print("Founded {0} {1} memory on {2} platform".format(memory_manufacturer, memory_pn, system_model))
+            # STEP is applicable only on Samsung's DRAM and in T175-N41-Y3N platform
+            #if memory_manufacturer == 'Samsung' and system_model == 'T175-N41-Y3N':
+            if system_model == 'T175-N41-Y3N':
                 return True
             else:
                 return False
-        except Exception as e:
-            print(self.host + " Fail: " + str(e))
-            # Don't forget to log our of self.session
-            self.destroy_session()
 
-    def update_microcode(self):
-        print("Creating new session...")
-        try:
-            self.create_session()
-            print(self.header)
-        except Exception as e:
-            print(self.host + " Fail: " + str(e))
-            # Don't forget to log our of self.session
-            self.destroy_session()
-        print("Successfully open new session with " + self.host)
+    def update_microcode(self, rbu_file):
+        if self.logged == False:
+            print("Creating new session...")
+            try:
+                self.create_session()
+                print(self.header)
+                print("Successfully open new session with " + self.host)
+            except Exception as e:
+                print(self.host + " Fail: " + str(e))
+                # Don't forget to log our of self.session
+                self.destroy_session()
 
+        print("Preparing SPI flash for update...")
         data = { 'flash_type' : 'BIOS' }
         r = self.session.put(url=self.api_url + 'api/maintenance/flash', json=data,
                             headers=self.header, verify=False)
-        print(r.content)
         if not r.ok:
-            raise MicrocodeUpdateError(r.content)
+            raise self.MicrocodeUpdateError(r.content)
 
         print("Uploading firmware image...")
         multipart_form_data = {
-            'fwimage': ('R05_STEP_2_10_NoPPR.RBU', open(self.test_bios_rbu, 'rb')),
+            'fwimage': (os.path.basename(self.test_bios_rbu), open(self.test_bios_rbu, 'rb')),
         }
-        #files = { 'file': ('fwimage', open(self.test_bios_rbu, 'rb'))}
-        #data = { 'name': 'fwimage', 'filename': 'R05_STEP_2_10_NoPPR.RBU' }
-        #debug_requests_on()
         r = self.session.post(url=self.api_url + 'api/maintenance/firmware', files=multipart_form_data,
                             headers=self.header, verify=False)
         for r_str in r.content.split('\n'):
@@ -159,32 +165,42 @@ class BMCHttpApi(object):
             except Exception:
                 pass
         if not r.ok:
-            raise MicrocodeUpdateError(r.content)
+            raise self.MicrocodeUpdateError(r.content)
         if not r_json or r_json['cc'] != 0:
             print(str(r.raw))
             print('Invalid status code!')
-            raise MicrocodeUpdateError(r.content)
+            raise self.MicrocodeUpdateError(r.content)
         print("Do verification...")
         params = {'flash_type': 'BIOS'}
-        #params = []
-        print(self.header)
         r = self.session.get(url=self.api_url + 'api/maintenance/firmware/verification', params=params,
                             headers=self.header, verify=False)
         if not r.ok:
-            raise MicrocodeUpdateError(r.content)
+            raise self.MicrocodeUpdateError(r.content)
         print("Starting to update...")
         data = { "flash_status":1, "preserve_config":0, "flash_type":"BIOS" }
         r = self.session.put(url=self.api_url + 'api/maintenance/firmware/upgrade', json=data,
                             headers=self.header, verify=False)
         if not r.ok:
-            raise MicrocodeUpdateError(r.content)
+            raise self.MicrocodeUpdateError(r.content)
 
-        print("Monitor flash progress")
-        for i in range(7):
-            progress = self.session.get(url=self.api_url + 'api/maintenance/firmware/flash-progress',
+        print("Monitoring flash progress...")
+        percent = '0'
+        while percent != 'Complete':
+            r = self.session.get(url=self.api_url + 'api/maintenance/firmware/flash-progress',
                             headers=self.header, verify=False)
-            print(progress)
-            time.sleep(20)
+            if not r.ok:
+                raise self.MicrocodeUpdateError(r.content)
+                break
+            try:
+                status = json.loads(r.content)
+                percent = status['progress'].split(' ')[0]
+                sys.stdout.write("\r%s" % percent)
+                sys.stdout.flush()
+            except Exception as e:
+                print("Progress bar don't work =(; Reason: " + str(e))
+                pass
+            time.sleep(10)
+        print("\n")
 
         self.destroy_session()
 
@@ -192,14 +208,19 @@ class BMCHttpApi(object):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('host')
+    parser.add_argument('-f', '--force', action='store_true')
     args = parser.parse_args()
 
-    bmc_api = BMCHttpApi(args.host, 'ADMIN', 'ADMIN', '/home/lacitis/WORK/ROMS/GB/MY81-EX0-Y3N/BIOS/R05/STEP/2.10/R05_STEP_2_10_NoPPR.RBU')
-    bmc_api.get_SMBIOS_information()
+    bmc_api = BMCHttpApi(args.host, 'ADMIN', 'ADMIN', step_rbu_file_path)
     # Check from BMC API that installed memory is Samsung 
-#    if bmc_api.get_STEP_possibility():
-#        print("GOOD NEWS! STEP IS POSSIBLE!")
+    if bmc_api.get_STEP_possibility() or args.force:
+        #print("STEP is possible!")
         # Update BIOS to DEBUG version
-        #bmc_api.update_microcode()
+        # STEP
+        #bmc_api.update_microcode(step_rbu_file_path)
+        # PPR
+        print("PPR action by applying RBU image: " + str(step_w_ppr_rbu_file_path))
+        bmc_api.update_microcode(step_w_ppr_rbu_file_path)
+        # Power off the node
+
         # Activate SOL parser
-        #...
