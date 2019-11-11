@@ -1,25 +1,47 @@
-0.0.0: DIMM_P0_A0
-0.0.1: DIMM_P0_A1
-0.1.0: DIMM_P0_B0
-0.1.1: DIMM_P0_B1
-0.2.0: DIMM_P0_C0
-0.2.1: DIMM_P0_C1
-0.3.0: DIMM_P0_D0
-0.3.1: DIMM_P0_D1
-0.4.0: DIMM_P0_E0
-0.4.1: DIMM_P0_E1
-0.5.0: DIMM_P0_F0
-0.5.1: DIMM_P0_F1
+plan_of_record:
+  cpu_nodes: 2
+  mem_channels: 6
+  dimm_per_channel: 2
+  slots_count: 24
+  ram_freq: 2666
 
-1.0.0: DIMM_P1_G0
-1.0.1: DIMM_P1_G1
-1.1.0: DIMM_P1_H0
-1.1.1: DIMM_P1_H1
-1.2.0: DIMM_P1_I0
-1.2.1: DIMM_P1_I1
-1.3.0: DIMM_P1_J0
-1.3.1: DIMM_P1_J1
-1.4.0: DIMM_P1_K0
-1.4.1: DIMM_P1_K1
-1.5.0: DIMM_P1_L0
-1.5.1: DIMM_P1_L1
+dimm_conf:
+  '0':
+    '0':
+      '0': DIMM_P0_A0
+      '1': DIMM_P0_A1
+    '1':
+      '0': DIMM_P0_B0
+      '1': DIMM_P0_B1
+    '2':
+      '0': DIMM_P0_C0
+      '1': DIMM_P0_C1
+    '3':
+      '0': DIMM_P0_D0
+      '1': DIMM_P0_D1
+    '4':
+      '0': DIMM_P0_E0
+      '1': DIMM_P0_E1
+    '5':
+      '0': DIMM_P0_F0
+      '1': DIMM_P0_F1
+
+  '1':
+    '0':
+      '0': DIMM_P1_G0
+      '1': DIMM_P1_G1
+    '1':
+      '0': DIMM_P1_H0
+      '1': DIMM_P1_H1
+    '2':
+      '0': DIMM_P1_I0
+      '1': DIMM_P1_I1
+    '3':
+      '0': DIMM_P1_J0
+      '1': DIMM_P1_J1
+    '4':
+      '0': DIMM_P1_K0
+      '1': DIMM_P1_K1
+    '5':
+      '0': DIMM_P1_L0
+      '1': DIMM_P1_L1

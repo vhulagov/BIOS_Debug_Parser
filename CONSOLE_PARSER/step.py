@@ -2,14 +2,14 @@
 
 from __future__ import print_function
 
+#import argparse
+
 import re
 import sys
 import json
-import yaml
 import logging
 
-import itertools
-from collections import defaultdict
+from msel import MemorySubsytemEventsLogger
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -23,35 +23,22 @@ class STEP:
     """
     Gather Samsung TestBIOS & Enhanced PPR (STEP) progress information, parse and return progress and the final status
     """
-    def __init__(self, args, conf, ram_info, test_result):
-        self.args = args
-        self.conf = conf
+    def __init__(self, ram_info):
         self.ram_info = ram_info
-        self.result = test_result
-        self.result.name = 'STEP'
-        self.step_result = {}
+        self.dimm_labels = ram_info.sys_conf['poppulation']
 
-        def tree():
-            return defaultdict(tree)
-
-        self.dimm_labels = yaml.load(open(conf['node_configuration']['dimm_labels']), Loader=yaml.SafeLoader)
-
-    def testplan(self):
-        testplan = {
-            self.send_results : [ self.qualification ],
-            self.qualification : [ self.result_completeness ]
+        self.testplan = {
+            'step.send_results': ['step.process_step'],
+            #'step.process_step': ['ram_conf_validator']
         }
-        return testplan
 
-    def processing_rules(self):
-        dbg_block_processing_rules = { 
-            '@SEC Run CPGC Test' : self.process_step
+        self.dbg_block_processing_rules = { 
+            '@SEC Run CPGC Test': 'step.process_step'
         }
-        return dbg_block_processing_rules
 
     def get_label_from_slot(self, slot_id):
-        dimm_id = '.'.join(slot_id)
-        dimm_label = self.dimm_labels[dimm_id]
+        n, c, d = slot_id
+        dimm_label = self.dimm_labels[n][c][d]
         return dimm_label
 
     def process_step(self, dbg_log_block, dbg_block_name, socket_id):
@@ -66,15 +53,20 @@ class STEP:
             #[FailedPatternBitMask 0x2] N1.C5.D0. FAIL: R1.CID0.BG2.BA3.ROW:0x0001a.COL:0x3f8.DQ24.
             #[FailedPatternBitMask 0x2] N0.C0.D1. FAIL: R1.CID0.BG2.BA3.ROW:0x07f63.COL:0x118.DQ58.PPR:Done(PASS)
             # Process failed patters records
+            print(line)	
+            return True
             failed_rank_match = re.match(STEP_FAILED_PATTERN_RE, line)
             if failed_rank_match:
-		print(line)	
                 dimm_id = self.get_label_from_slot(failed_rank_match.group(2,3,4))
-#                fail_detail = {
-#                    raw = failed_rank_match.group(0),
-
-                if not dimm_id in self.step_result:
+                print(dimm_id)
+                print(failed_rank_match.groups())
+                if dimm_id:
+                #    sn = self.ram_info.
+                    self.ram_info.log_ram_failure
+                    print(dir(self.ram_info))
                     self.step_result[dimm_id] = {}
+                    print(self.step_result)
+                print(step_dimm_result)
                 self.step_result[dimm_id].update({ 'serial' : step_dimm_result.group(5) })
                 logger.debug("Founded failed pattern: " + str(dimm_id))
             # Process Result Summary
@@ -108,61 +100,16 @@ class STEP:
             except:
                 return False
 
-    def qualification(self):
-        return True
-        outcome = False
-        worst_margin = {}
-        # Check if all parameters satisfy the margin thresholds (guidelines)
-        #print(json.dumps(self.rmt_worst_case_result.keys()))
-        #print(guidelines)
+    def send_results(self, dbg_log_block, dbg_block_name, socket_id):
+        pass
 
-        outcome = not any(abs(guidelines[x])>abs(self.rmt_worst_case_result[x].keys()[0]) for x in guidelines.keys())
-        if not outcome:
-            self.result.set_status(error='Margin is too bad')
-        #self.result.add_data(['guidelines'], guidelines)
-        self.result.config['guidelines'] = guidelines
-        self.result.add_data(['rmt'], self.rmt_results)
-        self.result.add_data(['worst_case'], self.rmt_worst_case_result)
-        logger.info("STEP guidelines: " + str(guidelines))
-        logger.info("Worst case result: " + str(self.rmt_worst_case_result))
-        init_value = next(iter(self.rmt_worst_case_result))
-        # Getting worst parameter from worst case margin
-        worst_margin[init_value] = self.rmt_worst_case_result[init_value]
-        for param in self.margin_params:
-            param_value_abs = abs(self.rmt_worst_case_result[param].keys()[0])
-            rmt_diff = param_value_abs-abs(guidelines[param])
-            if rmt_diff > 0:
-                logger.debug("STEP param(" + str(param) + "): passed " + str(param_value_abs) + " > " + str(guidelines[param]))
-                if abs(param_value_abs-guidelines[param])<worst_margin.itervalues().next():
-                    worst_margin = {}
-                    worst_margin[param] = rmt_diff
-            else:
-                logger.error("STEP result lower than threshold(" + str(param) + ":" + str(guidelines[param]) + \
-                "):" + str(param_value_abs))
-                if param_value_abs-guidelines[param]<worst_margin.itervalues().next():
-                    worst_margin = {}
-                    worst_margin[param] = rmt_diff
-        self.result.add_data(['worst_margin'], worst_margin)
-        self.result.finish()
-
-#    #environment['baseboard'] = baseboard_mfg + " " + baseboard_product
-#    #environment['inventory'] = baseboard_serial
-#    #environment['bmc version'] = bmc_version.lstrip('0')
-#    model = 'Unknown'
-#    if rmt_instance.result.component:
-#        model = rmt_instance.result.component[0].get('model')
-#    #    tags = [model]
-#    #    if args.tags:
-#    #        tags.extend(tag.strip() for tag in args.tags.split(','))
-#    #    rmt_instance.result.add_tags(tags)
-
-        return True
-
-    def send_results(self):
-        if self.args.disable_sending:
-            print(json.dumps(self.result.get_result_dict(), indent=2))
-            return True
-        else:
-            return self.result.send_via_api(self.conf['report']['api_url'])
+#if __name__ == '__main__':
+#    parser = argparse.ArgumentParser()
+#    parser.add_argument('file')
+#    args = parser.parse_args()
+#
+#    step = STEP(args, 'conf', 'ram_info', MemorySubsytemEventsLogger.):
+#    # Check from BMC API that installed memory is Samsung 
+#    if bmc_api.get_STEP_possibility():
 
 # vim: tabstop=8 softtabstop=0 expandtab shiftwidth=4 smarttab

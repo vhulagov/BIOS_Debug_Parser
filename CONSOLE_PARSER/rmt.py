@@ -23,63 +23,38 @@ class RMT:
     """
     Gather Intel Rank Margin Tool, parse and return the output
     """
-    def __init__(self, args, conf, ram_info, test_result):
+    def __init__(self, ram_info, rmt_guidelines):
         self.margin_params = ['RxDqs-', 'RxDqs+', 'RxV-', 'RxV+', 'TxDq-', 'TxDq+', 'TxV-', 'TxV+', 'Cmd-', 'Cmd+', 'CmdV-', 'CmdV+', 'Ctl-', 'Ctl+']
 
         self.dimm_params = ['DIMM vendor', 'DRAM vendor', 'RCD vendor', 'Organisation', 'Form factor', 'Freq', 'Prod. week', 'PN', 'hex']
 
-        self.args = args
-        self.conf = conf
         self.ram_info = ram_info
-        self.result = test_result
-        self.result.name = 'RMT'
+        self.rmt_guidelines = rmt_guidelines
 
         def tree():
             return defaultdict(tree)
 
         self.rmt_results = tree()
         self.rmt_worst_case_result = {}
-
-        self.guidelines_all = yaml.load(open(conf['RMT']['guidelines']), Loader=yaml.SafeLoader)
-        self.dimm_labels = yaml.load(open(conf['node_configuration']['dimm_labels']), Loader=yaml.SafeLoader)
-
-    def testplan(self):
-    #testplan = yaml.load(open(conf['signal_integrity']['goal_dependencies']), Loader=yaml.BaseLoader)
-    #testplan_set = dict((globals()[k], set(testplan[globals()[k]])) for k in testplan)
-    #testplan_set = dict((eval(k), set(testplan[eval(k)])) for k in testplan)
-#    return testplan = {
-#    #        send_component_info : [ ram_conf_validator ],
-#        send_rmt_results : [ rmt_instance.qualification ],
-#        ram_conf_validator : [ process_socket_info, process_dimm_info ],
-#        rmt_instance.get_worst_case : [ rmt_instance.result_completeness ],
-#        rmt_instance.result_completeness : [ process_dimm_info ],
-#        rmt_instance.qualification : [ rmt_instance.get_worst_case, ram_conf_validator ],
-#        process_socket_info : [ console_data_dummy ],
-#        process_dimm_info : [ console_data_dummy ]
-#    }
-        testplan = {
+        self.dbg_block_processing_rules = {
+            'BSSA_RMT' : 'process_rmt_results',
+            'RMT_N0' : 'process_rmt_results',
+            'RMT_N1' : 'process_rmt_results',
+        }
+        self.testplan = {
         #     send_component_info : [ ram_conf_validator ],
         #     self.result_completeness : [ process_dimm_info ],
-            self.send_results : [ self.qualification ],
-            self.qualification : [ self.get_worst_case ],
-            self.get_worst_case : [ self.result_completeness ]
+            'send_results': [ 'qualification' ],
+            'qualification': [ 'get_worst_case' ],
+            'get_worst_case': [ 'result_completeness' ]
         }
-        return testplan
-
-    def processing_rules(self):
-        dbg_block_processing_rules = {
-            'BSSA_RMT' : self.process_rmt_results,
-            'RMT_N0' : self.process_rmt_results,
-            'RMT_N1' : self.process_rmt_results,
-        }
-        return dbg_block_processing_rules
 
     def guidelines(self):
         #print(json.dumps(self.ram_info['System']['DDR Freq'], indent=2))
         logger.info("DDR frequency: " + str(self.ram_info['System']['DDR Freq']))
-        #json.dumps(self.guidelines_all, indent=4)
-        guidelines = self.guidelines_all['common'].copy()
-        guidelines.update(self.guidelines_all[self.ram_info['System']['DDR Freq']])
+        #json.dumps(self.rmt_guidelines, indent=4)
+        guidelines = self.rmt_guidelines['common'].copy()
+        guidelines.update(self.rmt_guidelines[self.ram_info['System']['DDR Freq']])
         return guidelines
 
     def process_rmt_results(self, rmt_block, rmt_block_name, socket_id):
@@ -120,9 +95,6 @@ class RMT:
 
     def result_completeness(self):
         logger.info("Check RMT results completeness...")
-        if not self.result.component:
-            return False
-
         guidelines = self.guidelines()
         try:
             print(self.rmt_worst_case_result[x].keys()[0] for x in guidelines.keys())
