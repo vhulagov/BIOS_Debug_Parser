@@ -9,6 +9,8 @@ import sys
 import argparse
 import os.path
 
+import json
+
 class SMBios(object):
     '''
     Decode smbios.bin
@@ -87,31 +89,33 @@ class SMBios(object):
         self.__type4_index_list = []
         self.__type16_index_list = []
         self.__type17_index_list = []
-        if os.path.isfile(src):
-            print("Input data is a file")
-            with open(src, "rb") as fin:
-                self._buf = fin.read()
-        else:
-            print("Input data is a stream")
-            self._buf = src
+        self._buf = src
+#        if os.path.isfile(src):
+#            print("Input data is a file")
+#            with open(src, "rb") as fin:
+#                self._buf = fin.read()
+#        else:
+#            print("Input data is a stream")
+#            self._buf = src
         if self.__decode3():
-            print("Detected SMBIOS v3")
+            #print("Detected SMBIOS v3")
+            pass
         elif self.__decode():
-            print("Detected SMBIOS v2")
+            #print("Detected SMBIOS v2")
+            pass
         #elif self.__decode_no_entry():
         else:
             raise Exception("can't identify SMBIOS version")
 
     def __decode3(self):
-        print("Unpack Entry Table")
+        #print("Unpack Entry Table")
         # unpack Entry Table
-        print(self._buf)
         entry = struct.unpack_from(SMBios._fmt3_entry, self._buf, 0)
         if not (entry[0] == "_SM3_" and entry[3] == 3):
             return False
         self.__entry = entry
         # get offset from header['TableAddress'].
-        print("Get offset from header['TableAddress']")
+        #print("Get offset from header['TableAddress']")
         #print(entry[9])
         offset = entry[9]
         while offset < len(self._buf):
@@ -200,13 +204,14 @@ class SMBios(object):
         result += '\0'.join(strings)
         return result
 
-    def decode_all_data(self):
+    def decode_all(self):
         self.decode_type0()
         self.decode_type1()
 #        self.decode_type2()
 #        self.decode_type3()
 #        self.decode_type4()
-#        self.decode_type17()
+        self.decode_type17()
+        return self.smbios
 
     def __update_string(self, string_values, index, value):
         if value is None:
@@ -238,7 +243,7 @@ class SMBios(object):
 #            'bios_revision': string_values[7],
 #            'firmware_revision': string_values[8]
             }
-        print(self.smbios)
+        #print(self.smbios)
 
     def decode_type1(self):
         '''
@@ -259,26 +264,7 @@ class SMBios(object):
             'system_vendor': string_values[0],
             'system_model': string_values[1]
             }
-    def decode_type1(self):
-        '''
-        support following fields,
-        sn, uuid, and sku_number,
-        '''
-        self.smbios['type1'] = {}
-        # Refer to Chapter 7.2
-        sys_info_fmt = "BBHBBBB16sBBB"
-        # fetch the System Information Structure
-        sys_info = self.__dict[self.__type1_index]
-        # __decode header.
-        info, string_values = self._unpack_table(sys_info_fmt, sys_info)
-
-        #[1, 27, 1, 1, 2, 3, 4, '\x00\x80\x93\xdbt\xfd\xe7\x11\x80\x00\xb4.\x99/Z\x14', 6, 5, 6]
-        #['Yandex', 'T175-N41-Y3N', '0100', '102701401', '01234567890123456789AB', 'Server', '', '']
-        self.smbios['type1'] = {
-            'system_vendor': string_values[0],
-            'system_model': string_values[1]
-            }
-        print(self.smbios['type1'])
+        #print(self.smbios)
 
     def decode_type2(self):
         self.smbios['type2'] = {}
@@ -356,7 +342,7 @@ class SMBios(object):
             # pack the table
             self.__dict[idx] = self._pack_table(pro_info_fmt, pro_info, string_values)
 
-    def check_type16(self, total_count):
+    def check_type16(self):
         if len(self.__type16_index_list) == 0:
             raise Exception("Type 16 - Physical Memory Array is missing")
         fmt = '=BBHBBBIHHQ'
@@ -368,21 +354,23 @@ class SMBios(object):
             # if not, Slot number in Type16 Physical Memory Array must be modified.
             # 8th field "Number of Memory Devices"
             count += info[8]
-        if count < total_count:
-            raise Exception('Not enough dimm slots. Provides: {}, expected: {}'.format(count, total_count))
+#        if count < total_count:
+#            raise Exception('Not enough dimm slots. Provides: {}, expected: {}'.format(count, total_count))
 
-    def decode_type17(self, dimm=None):
+    def decode_type17(self):
         '''
         support following fields,
-        sn, size, part number, manufactuer, asset tag, part number and number of dimm
+        sn, size, part number, manufacturer, asset tag, part number and number of dimm
         '''
-        if dimm is None:
-            # don't modify memory device array.
-            return
+#        if dimm is None:
+#            # don't modify memory device array.
+#            print("Don't modify memory device array.")
+#            return
 
-        self.check_type16(len(dimm))
+        self.check_type16()
         if len(self.__type4_index_list) == 0:
             raise Exception("Type 17 - Memory Device is missing")
+        self.smbios['type17'] = []
         # Cha 7.18, Table 73
         mem_info_fmt = '=BBHHHHHHBBBBBHHBBBBBIHHHH'
 
@@ -391,28 +379,28 @@ class SMBios(object):
                 "type",
                 "length",
                 "handle",
-                "physical memory array handle",
-                "memory error information handle",
-                "total width",
-                "data width",
+                "physical_memory_array_handle",
+                "memory_error_information_handle",
+                "total_width",
+                "data_width",
                 "size",
-                "form factor",
-                "device set",
-                "device locator",
-                "ban locator",
-                "memory type",
-                "type detail",
+                "form_factor",
+                "device_set",
+                "device_locator",
+                "bank_locator",
+                "memory_type",
+                "type_detail",
                 "speed",
-                "manufactuer",
+                "manufacturer",
                 "sn",
-                "asset tag",
-                "part number",
+                "asset_tag",
+                "part_number",
                 "attributes",
-                "extended size",
-                "configured memory clock speed",
-                "min volt",
-                "max volt",
-                "config volt"]
+                "extended_size",
+                "configured_memory_clock_speed",
+                "min_volt",
+                "max_volt",
+                "config_volt"]
 
             def __setitem__(self, key, value):
                 if isinstance(key, str):
@@ -424,81 +412,35 @@ class SMBios(object):
                     key = self.fields.index(key)
                 return super(mem_dev_struct, self).__getitem__(key)
 
-        all_targets = []
         for idx in self.__type17_index_list:
             mem_info = self.__dict[idx]
             info, string_values = self._unpack_table(mem_info_fmt, mem_info)
             info = mem_dev_struct(info)
-            # found memory device by device locator
-            dev_locator = string_values[info["device locator"] - 1]
-            all_targets.append({"idx": idx, "locator": dev_locator, "info": info, "strings": string_values})
-
-        for dimm_info in dimm:
-            locator = dimm_info.get("locator")
-            target = filter(lambda x: x["locator"] == locator, all_targets)
-            if len(target) == 0:
-                raise Exception("Expected memory locator {} not found in Type17 list".format(locator))
-            target[0]["expected"] = dimm_info
-
-        for target in all_targets:
-            dimm_info = target.get("expected", {})
-            info = target["info"]
-            string_values = target["strings"]
-            size = dimm_info.get('size', 0)
+            size = info['size']
             if size:
-                # modify target memory device.
-                info["total width"] = 72
-                info["data width"] = 64
-
+                type17_inst = {}
                 # according to spec,
                 # info['size'] & 0x8000 == 1, unit = KB.
                 # info['size'] & 0x8000 == 0, unit = MB.
                 if size < 1024 * 1024:
                     size = size / 1024
-                    info["size"] = 0x8000 + size
+                    type17_inst["size"] = 0x8000 + size
                 else:
                     size = size / 1024 / 1024
-                    info["size"] = size
-                info["form factor"] = 9
-                info["device set"] = 0
-                info["device locator"] = 1
-                info["ban locator"] = 2
-                info["memory type"] = 26
-                info["type detail"] = 128
-                info["speed"] = 2666
-                info["attributes"] = 2
-                info["extended size"] = 0
-                info["configured memory clock speed"] = 2666
-                info["manufactuer"] = self.__update_string(string_values, info["manufactuer"],
-                                                           dimm_info.get('manufactuer', 'Hynix'))
-                info["sn"] = self.__update_string(string_values, info["sn"], dimm_info.get('sn'))
-                info["asset tag"] = self.__update_string(string_values, info["asset tag"],
-                                                         dimm_info.get('asset_tag', string_values[0] + '_AssetTag'))
-                info["part number"] = self.__update_string(string_values, info["part number"],
-                                                           dimm_info.get('part_number', 'HMA82GR7AFR8N-VK'))
-            else:
-                info["total width"] = 0
-                info["data width"] = 0
-                info["size"] = 0
-                info["form factor"] = 2
-                info["device set"] = 0
-                info["device locator"] = 1
-                info["ban locator"] = 2
-                info["memory type"] = 2
-                info["type detail"] = 0
-                info["speed"] = 0
-                info["attributes"] = 0
-                info["extended size"] = 0
-                info["configured memory clock speed"] = 0
+                    type17_inst["size"] = size
+                # fill other fields
+                for prop in info.fields:
+                    type17_inst[prop] = info[prop]
 
-                info["manufactuer"] = self.__update_string(string_values, info["manufactuer"], "NO DIMM")
-                info["sn"] = self.__update_string(string_values, info["sn"], "NO DIMM")
-                info["asset tag"] = self.__update_string(string_values, info["asset tag"], "NO DIMM")
-                info["part number"] = self.__update_string(string_values, info["part number"], "NO DIMM")
+                #print(json.dumps(type17_inst, indent=2))
 
-            idx = target["idx"]
-            # pack modified data and save it
-            self.__dict[idx] = self._pack_table(mem_info_fmt, info, string_values)
+                type17_inst["bank_locator"] = string_values[0]
+                type17_inst["locator"] = string_values[1]
+                type17_inst["manufacturer"] = string_values[2]
+                type17_inst["sn"] = string_values[3]
+                type17_inst["asset_tag"] = string_values[4]
+                type17_inst["part_number"] = string_values[5].strip()
+                self.smbios['type17'].append(type17_inst)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -506,4 +448,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     smbios = SMBios(args.src)
-    smbios.decode_type0()
+    smbios.decode_all()
+    #print(json.dumps(smbios.smbios, indent=2))
