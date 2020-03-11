@@ -14,9 +14,9 @@ import argparse
 from smbios import SMBios
 
 step_release_date = '06/20/2019'
+r05_rbu_file_path = '/home/lacitis/WORK/ROMS/GB/MY81-EX0-Y3N/BIOS/R05/RBU/image.RBU'
 step_rbu_file_path = '/home/lacitis/WORK/ROMS/GB/MY81-EX0-Y3N/BIOS/R05/STEP/2.10/R05_STEP_2_10_NoPPR.RBU'
-#step_w_ppr_rbu_file_path = '/home/lacitis/WORK/ROMS/GB/MY81-EX0-Y3N/BIOS/R05/STEP/2.10/R05_STEP_2_10_PPR.RBU'
-step_w_ppr_rbu_file_path = '/home/lacitis/WORK/ROMS/GB/MY81-EX0-Y3N/BIOS/R05/STEP/2.09/MY81-EX0-Y3N_R05_STEP_HPPR_NoRMT.RBU'
+step_w_ppr_rbu_file_path = '/home/lacitis/WORK/ROMS/GB/MY81-EX0-Y3N/BIOS/R05/STEP/2.10/R05_STEP_2_10_PPR.RBU'
 
 #import contextlib
 #try:
@@ -47,11 +47,10 @@ step_w_ppr_rbu_file_path = '/home/lacitis/WORK/ROMS/GB/MY81-EX0-Y3N/BIOS/R05/STE
 
 class BMCHttpApi(object):
 
-    def __init__(self, host, user, password, test_bios_rbu, logger=None):
+    def __init__(self, host, user, password, logger=None):
         self.host = host
         self.user = user
         self.password = password
-        self.test_bios_rbu = test_bios_rbu
         self.logged = False
         if not logger:
             import logging
@@ -153,9 +152,9 @@ class BMCHttpApi(object):
         if not r.ok:
             raise self.MicrocodeUpdateError(r.content)
 
-        print("Uploading firmware image...")
+        print("Uploading firmware image..." + str(rbu_file))
         multipart_form_data = {
-            'fwimage': (os.path.basename(self.test_bios_rbu), open(self.test_bios_rbu, 'rb')),
+            'fwimage': (os.path.basename(rbu_file), open(rbu_file, 'rb')),
         }
         r = self.session.post(url=self.api_url + 'api/maintenance/firmware', files=multipart_form_data,
                             headers=self.header, verify=False)
@@ -209,18 +208,25 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('host')
     parser.add_argument('-f', '--force', action='store_true')
+    parser.add_argument('-i', '--image')
     args = parser.parse_args()
 
-    bmc_api = BMCHttpApi(args.host, 'ADMIN', 'ADMIN', step_rbu_file_path)
+    bmc_api = BMCHttpApi(args.host, 'ADMIN', 'ADMIN')
     # Check from BMC API that installed memory is Samsung 
     if bmc_api.get_STEP_possibility() or args.force:
-        #print("STEP is possible!")
-        # Update BIOS to DEBUG version
-        # STEP
-        #bmc_api.update_microcode(step_rbu_file_path)
-        # PPR
-        print("PPR action by applying RBU image: " + str(step_w_ppr_rbu_file_path))
-        bmc_api.update_microcode(step_w_ppr_rbu_file_path)
-        # Power off the node
+        if args.image:
+            print("Updating BIOS by using the following RBU image: " + str(args.image))
+            bmc_api.update_microcode(args.image)
+        else:
+            #print("STEP is possible!")
+            # Restore BIOS R05
+            #bmc_api.update_microcode(r05_rbu_file_path)
+            # Update BIOS to DEBUG version
+            # STEP
+            #bmc_api.update_microcode(step_rbu_file_path)
+            # PPR
+            print("PPR action by applying RBU image: " + str(step_w_ppr_rbu_file_path))
+            bmc_api.update_microcode(step_w_ppr_rbu_file_path)
+            # Power off the node
 
         # Activate SOL parser
