@@ -10,6 +10,8 @@ import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
+import base64
+
 import argparse
 from smbios import SMBios
 
@@ -102,6 +104,29 @@ class BMCHttpApi(object):
         print("Exception: " + str(Exception))
         self.destroy_session()
 
+    def get_BIOS_setup(self):
+        import gzip
+        if not self.logged:
+            print("Getting BIOS settings...")
+            try:
+                self.create_session()
+                r = self.session.get(url=self.api_url + 'api/system_inventory_gbt/bios-setup-file',
+                                    headers=self.header, verify=False)
+                if not r.ok:
+                    raise self.MicrocodeUpdateError(r.content)
+                #bios_settings_gz = r.content.decode('base64')
+                bios_settings_gz = base64.b64decode(r.content)
+                bios_settings_json_bytes = gzip.decompress(bios_settings_gz)
+                with open('/tmp/bios_settings.json', 'wb') as f:
+                    f.write(bios_settings_json_bytes)
+                #bios_settings_json = json.loads(bios_settings_json_bytes.decode('utf8').replace("'", '"'))
+                bios_settings_json = json.loads(bios_settings_json_bytes.decode('utf8'))
+                print(type(bios_settings_json))
+                print(json.dumps(bios_settings_json, indent=2))
+            except Exception as e:
+                print(str(e))
+                self.destroy_session()
+
     def get_SMBIOS_information(self):
         try:
             self.create_session()
@@ -158,9 +183,9 @@ class BMCHttpApi(object):
         }
         r = self.session.post(url=self.api_url + 'api/maintenance/firmware', files=multipart_form_data,
                             headers=self.header, verify=False)
-        for r_str in r.content.split('\n'):
+        for r_str in r.content.split(b'\n'):
             try:
-                r_json = json.loads(r_str)
+                r_json = json.loads(r_str.decode('utf-8'))
             except Exception:
                 pass
         if not r.ok:
@@ -191,7 +216,7 @@ class BMCHttpApi(object):
                 raise self.MicrocodeUpdateError(r.content)
                 break
             try:
-                status = json.loads(r.content)
+                status = json.loads(r.content.decode('utf-8'))
                 percent = status['progress'].split(' ')[0]
                 sys.stdout.write("\r%s" % percent)
                 sys.stdout.flush()
@@ -212,6 +237,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     bmc_api = BMCHttpApi(args.host, 'ADMIN', 'ADMIN')
+    # Get BIOS settings
+#    bmc_api.get_BIOS_setup()
+#    sys.exit(0)
+
     # Check from BMC API that installed memory is Samsung 
     if bmc_api.get_STEP_possibility() or args.force:
         if args.image:
