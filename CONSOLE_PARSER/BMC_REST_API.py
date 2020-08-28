@@ -155,7 +155,7 @@ class BMCHttpApi(object):
             system_model = bmc_api.smbios['type1']['system_model']
             memory_manufacturer = bmc_api.smbios['type17'][0]['manufacturer']
             memory_pn = bmc_api.smbios['type17'][0]['part_number']
-            print('Founded "{0} {1}" memory on {2} platform'.format(memory_manufacturer, memory_pn, system_model))
+            print('Detected {0} {1} memory in node type: {2}'.format(memory_manufacturer, memory_pn, system_model))
             # STEP is applicable only on Samsung's DRAM and in T175-N41-Y3N platform
             #if memory_manufacturer == 'Samsung' and system_model == 'T175-N41-Y3N':
             if system_model == 'T175-N41-Y3N':
