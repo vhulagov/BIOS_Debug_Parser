@@ -6,9 +6,12 @@ import os
 import sys
 import time
 import json
+import logging
 import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
+logging.getLogger("requests").setLevel(logging.WARNING)
 
 import base64
 
@@ -62,7 +65,7 @@ class BMCHttpApi(object):
         #self.header.update({'Content-Type': 'application/json'})
         self.api_url = 'https://[' + self.host + ']/'
 
-    class MicrocodeUpdateError(Exception):
+    def MicrocodeUpdateError(Exception):
         """Raise if any step of preparing to microcode update fails"""
         print("Exception: " + str(Exception))
 
@@ -134,7 +137,9 @@ class BMCHttpApi(object):
                                 headers=self.header, verify=False)
             if not r.ok:
                 raise self.MicrocodeUpdateError(r.content)
-            smbios_bin = r.content.decode('base64')
+            #smbios_bin = r.content.decode('base64')
+            smbios_bin = base64.b64decode(r.content)
+            #print(smbios_bin)
             #open('/tmp/smbios.decoded', 'wb').write(smbios_bin)
             smbios_class = SMBios(smbios_bin)
             self.smbios = smbios_class.decode_all()
@@ -150,7 +155,7 @@ class BMCHttpApi(object):
             system_model = bmc_api.smbios['type1']['system_model']
             memory_manufacturer = bmc_api.smbios['type17'][0]['manufacturer']
             memory_pn = bmc_api.smbios['type17'][0]['part_number']
-            print("Founded {0} {1} memory on {2} platform".format(memory_manufacturer, memory_pn, system_model))
+            print('Founded "{0} {1}" memory on {2} platform'.format(memory_manufacturer, memory_pn, system_model))
             # STEP is applicable only on Samsung's DRAM and in T175-N41-Y3N platform
             #if memory_manufacturer == 'Samsung' and system_model == 'T175-N41-Y3N':
             if system_model == 'T175-N41-Y3N':
@@ -239,7 +244,9 @@ if __name__ == '__main__':
     bmc_api = BMCHttpApi(args.host, 'ADMIN', 'ADMIN')
     # Get BIOS settings
 #    bmc_api.get_BIOS_setup()
-#    sys.exit(0)
+#    bmc_api.get_SMBIOS_information()
+    bmc_api.get_STEP_possibility()
+    sys.exit(0)
 
     # Check from BMC API that installed memory is Samsung 
     if bmc_api.get_STEP_possibility() or args.force:

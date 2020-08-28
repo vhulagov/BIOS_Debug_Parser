@@ -90,6 +90,7 @@ class SMBios(object):
         self.__type16_index_list = []
         self.__type17_index_list = []
         self._buf = src
+#        print(src)
 #        if os.path.isfile(src):
 #            print("Input data is a file")
 #            with open(src, "rb") as fin:
@@ -108,15 +109,12 @@ class SMBios(object):
             raise Exception("can't identify SMBIOS version")
 
     def __decode3(self):
-        #print("Unpack Entry Table")
-        # unpack Entry Table
         entry = struct.unpack_from(SMBios._fmt3_entry, self._buf, 0)
-        if not (entry[0] == "_SM3_" and entry[3] == 3):
+        if not (entry[0] == b'_SM3_' and entry[3] == 3):
             return False
         self.__entry = entry
         # get offset from header['TableAddress'].
         #print("Get offset from header['TableAddress']")
-        #print(entry[9])
         offset = entry[9]
         while offset < len(self._buf):
             offset = self.__decode_entry(offset)
@@ -141,15 +139,21 @@ class SMBios(object):
         """
         Decode the SMBIOSEntryPoint
         """
+        #print("Unpack SMBIOS")
         # unpack Entry Table
+        #print(len(self._buf))
+        #print(struct.calcsize(SMBios._fmt_entry))
         entry = struct.unpack_from(SMBios._fmt_entry, self._buf, 0)
-        if not (entry[0] == "_SM_"):
+
+        if not (entry[0] == b'_SM_'):
             return False
 
-        self.save = self.__save
+        #self.save = self.__save
         self.__entry = entry
         offset = struct.calcsize(SMBios._fmt_entry)
+        #offset =  entry[12]
         for _ in range(0, entry[12]):
+        #while offset < len(self._buf):
             offset = self.__decode_entry(offset)
         return True
 
@@ -157,11 +161,10 @@ class SMBios(object):
         header = struct.unpack_from(SMBios._fmt_header, self._buf, offset)
         start = offset
         offset += header[1]
-        while self._buf[offset] != '\0' or self._buf[offset + 1] != '\0':
+        while self._buf[offset] != 0 or self._buf[offset + 1] != 0:
             offset += 1
         offset += 2
         structure = self._buf[start:offset]
-        #print(header[0])
 
         if header[0] == SMBios.TYPE_BIOSInformation:
             self.__type0_index = len(self.__dict)
@@ -187,14 +190,13 @@ class SMBios(object):
 
     def _unpack_table(self, fmt, src):
         # unpack data. drop end of fmt if src is not long enough.
-        length = ord(src[1])
-        pad = 0
-        while struct.calcsize(fmt) > length:
-            fmt = fmt[:-1]
-            pad = pad + 1
+        length = src[1]
+        pad = struct.calcsize(fmt) - length
+        src += bytes([0] * pad)
         result = list(struct.unpack_from(fmt, src))
         result.extend([0] * pad)
-        strings = src[length:].split('\0')
+        strings = [x.decode('Windows-1251') for x in src[length:].split(b'\0')]
+        #strings = src[length:].split(b'\0')
         return result, strings
 
     def _pack_table(self, fmt, info, strings):
@@ -252,7 +254,7 @@ class SMBios(object):
         '''
         self.smbios['type1'] = {}
         # Refer to Chapter 7.2
-        sys_info_fmt = "BBHBBBB16sBBB"
+        sys_info_fmt = 'BBHBBBB16sBBB'
         # fetch the System Information Structure
         sys_info = self.__dict[self.__type1_index]
         # __decode header.
@@ -405,6 +407,7 @@ class SMBios(object):
             def __setitem__(self, key, value):
                 if isinstance(key, str):
                     key = self.fields.index(key)
+                    print(key)
                 super(mem_dev_struct, self).__setitem__(key, value)
 
             def __getitem__(self, key):
@@ -438,8 +441,12 @@ class SMBios(object):
                 type17_inst["locator"] = string_values[1]
                 type17_inst["manufacturer"] = string_values[2]
                 type17_inst["sn"] = string_values[3]
-                type17_inst["asset_tag"] = string_values[4]
-                type17_inst["part_number"] = string_values[5].strip()
+                if "AssetTag" in string_values[4]:
+                    type17_inst["asset_tag"] = string_values[4]
+                    type17_inst["part_number"] = string_values[5].strip()
+                else:
+                    type17_inst["asset_tag"] = string_values[5]
+                    type17_inst["part_number"] = string_values[4].strip()
                 self.smbios['type17'].append(type17_inst)
 
 if __name__ == '__main__':
