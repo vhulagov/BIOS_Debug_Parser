@@ -366,23 +366,28 @@ class BDSM():
                 continue
 
             ram_info_buffer.append(line_splitted)
-            for index, socket_id in enumerate(header[1:]):
-                socket_dict = {}
-                #logger.info("Socket:" + str(index) + ' ' + str(socket_id))
+            for index, socket in enumerate(header[1:]):
+                print(index)
+                print(socket)
+                if len(socket.split()) > 2:
+                    socket_id = socket.split()[-1]
+                logger.info("Socket:" + str(index) + ' ' + str(socket))
                 for line in ram_info_buffer[:-1]:
-                     if len(line) >= index + 2:
-                          value = line[index+1].strip()
-                          if not value or value == 'N/A':
-                               continue
-                          if line[0].startswith('Ch'):
-                              channel_dict = {}
-                              channel_raw, param = line[0].split()
-                              channel_id = re.sub(r'Ch([0-5])', r"Channel \1", channel_raw)
-                              ram_info[socket_id][channel_id][param] = value
-                          else:
-                              key = line[0]
-                              ram_info[socket_id][key] = value
-        return ram_info['System']['DDR Freq'].isdigit()
+                    logger.info("Socket:" + str(index) + ' ' + str(socket_id))
+                    if len(line) >= index + 2:
+                         value = line[index+1].strip()
+                         if not value or value == 'N/A':
+                              continue
+                         if line[0].startswith('Ch'):
+                             channel_dict = {}
+                             channel_raw, param = line[0].split()
+                             channel_id = re.sub(r'Ch([0-5])', r"\1", channel_raw)
+                             self.ram_info[socket_id][channel_id][param] = value
+                         else:
+                            # TODO: laste_session
+                             key = line[0]
+                             self.ram_info[socket_id][key] = value
+        return self.ram_info['System']['DDR Freq'].isdigit()
 
     def ram_conf_validator(self):
         logger.debug('Checking RAM info completeness...')
