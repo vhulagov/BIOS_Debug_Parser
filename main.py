@@ -12,6 +12,7 @@ import glob
 
 import logging
 import re
+import cv2
 
 import smbus
 import serial
@@ -24,7 +25,7 @@ from elevator import Elevator
 I2C_BUS_DEV_NAME_RE = re.compile(r'i2c-tiny-usb')
 
 pca9685pw_addr = 0x40 # Address pins [1][A5][A4][A3][A2][A1][A0]
-motor_ina219_addr = 0x41 # Address pins [1][0][0][0][0][A0][A1]
+dc_motor_ina219_addr = 0x41 # Address pins [1][0][0][0][0][A0][A1]
 
 dc_motor_pwm_frequency = 100 # Hertz 64 recomended for Servos
 
@@ -48,15 +49,69 @@ def find_tiny_usb_i2c_gate():
             if i2c_bus_sys_path_list[:-1] == bus_sys_path:
                 return -1
 
+
+def action():
+        # Press Esc on keyboard to exit
+        key = cv2.waitKey(25)
+        if key == 27:
+            print("Interrupt")
+            break
+        elif k == -1:  # normally -1 returned,so don't print it
+            continue
+
+        elif key == 82 # UP
+
+        elif key == 84 # DOWN
+
+        elif key == 81 # LEFT
+
+        elif key == 83 # RIGHT
+
+        elif key == ord('e'):
+            print('e')
+
+        elif key & 0xFF == ord('w'):
+            print('w')
+
 if __name__ == '__main__':
     logger.info('******************************************')
     logger.info('Starting up...')
     i2c_bus_id = find_tiny_usb_i2c_gate()
     if i2c_bus_id is None or type(i2c_bus_id) is not int:
         logger.error("I2C bus is not found!")
-        exit(1)
+        sys.exit(1)
     logger.info("Founded USB-I2C gate on bus: " + str(i2c_bus_id))
 
     elevator = Elevator(i2c_bus_id, pca9685pw_addr, dc_motor_pwm_frequency)
+    dc_motor_meas = INA219(dc_motor_ina219_addr, i2c_bus_id)
+
+    # TODO move to thread/subprocess
+    try:
+        print('BusVoltage (in Volts) =', dc_motor_meas.getLoadVoltage())
+        print('ShuntVoltage (in Volts) =', dc_motor_meas.getShuntVoltage())
+        if regs[5] != 0:
+            print('LoadCurrent (in Amps) =', dc_motor_meas.getLoadCurrent())
+            print('LoadPower (in Watts) =', dc_motor_meas.getPowerUsed())
+    except OSError:
+        print('Connection to INA219 failed.')
+        sys.exit(121)
+
+    # Capturing — 1. detects object and translate distance betwen object
+    # Sensing — 2. capture sensor values
+    # Acting — control motors and other actuators
+    capturing_q = multiprocessing.Queue()
+    sensing_q = multiprocessing.Queue()
+    acting_q = multiprocessing.Queue()
+        
+    multiprocessing.Process(target=see, args=(eye_q, memorize_q)).start()
+    multiprocessing.Process(target=learn, args=(memorize_q, brain_q)).start()
+    multiprocessing.Process(target=display, args=(eye_q, brain_q)).start()
+
+
+    try:
+        raw_input('')
+    except KeyboardInterrupt:
+        map(lambda x: x.terminate(), multiprocessing.active_children())
+
 
 # vim: tabstop=8 softtabstop=0 expandtab shiftwidth=4 smarttab
