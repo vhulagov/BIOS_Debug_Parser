@@ -537,7 +537,7 @@ class BDSM():
             #slot = self.dimm_labels[warn_dict['socket'], warn_dict['channel'], warn_dict['dimm']]
             error_event_data = {}
             warn_dict['data_provider'] = 'MBIST'
-            warn_dict['logger'] = 'BSDM'
+            warn_dict['logger'] = 'BDSM'
             warn_dict['logger_version'] = parser_version
             print(json.dumps(warn_dict, indent=2))
             warn_dict = self.ram_info.log_dimm_error_event(warn_dict)
