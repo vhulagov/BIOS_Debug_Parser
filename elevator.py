@@ -11,12 +11,14 @@ class Elevator(object):
         self.l_pwm_ch = 3
 
     # TODO: calibrate speed, then calc path from speed*time
-    def move_down(self, pwm):
+    def move_down(self, speed, time):
         self.pwm.reset()
-        self.pwm.set_off(l_pwm_ch)
-        self.pwm.set_percent(r_pwm_ch,100)
+        self.pwm.set_off(self.l_pwm_ch)
+        self.pwm.set_percent(self.r_pwm_ch, speed)
+        time.sleep(time)
 
-    def move_up(self, pwm):
+    def move_up(self, speed, time):
         self.pwm.reset()
-        self.pwm.set_off(r_pwm_ch)
-        self.pwm.set_percent(l_pwm_ch,100)
+        self.pwm.set_off(self.r_pwm_ch)
+        self.pwm.set_percent(self.l_pwm_ch,speed)
+        time.sleep(time)
